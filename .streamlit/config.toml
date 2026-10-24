@@ -6,6 +6,7 @@ primaryColor = "#7c9cff"
 # 이 앱은 사용자 컴퓨터에서 명령을 실행할 수 있으므로 같은 네트워크의 다른 사람이 접속하지 못하게 한다.
 address = "localhost"
 headless = true
+maxUploadSize = 30
 
 [browser]
 gatherUsageStats = false

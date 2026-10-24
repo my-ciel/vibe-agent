@@ -30,6 +30,7 @@ class ModelInfo:
     prompt_per_m: float | None  # 입력 100만 토큰당 USD
     completion_per_m: float | None
     supports_tools: bool | None  # 알 수 없으면 None
+    supports_images: bool | None = None  # 이미지 입력 가능 여부, 알 수 없으면 None
 
 
 def _per_million(value: Any) -> float | None:
@@ -47,11 +48,13 @@ def parse_catalog(payload: dict) -> dict[str, ModelInfo]:
             continue
         pricing = item.get("pricing") or {}
         params = item.get("supported_parameters")
+        modalities = (item.get("architecture") or {}).get("input_modalities")
         catalog[model_id] = ModelInfo(
             id=model_id,
             prompt_per_m=_per_million(pricing.get("prompt")),
             completion_per_m=_per_million(pricing.get("completion")),
             supports_tools=("tools" in params) if isinstance(params, list) else None,
+            supports_images=("image" in modalities) if isinstance(modalities, list) else None,
         )
     return catalog
 

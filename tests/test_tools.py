@@ -157,3 +157,10 @@ def test_bad_argument_types(ctx):
         run(ctx, "read_file", path=123)
     with pytest.raises(ToolError):
         run(ctx, "read_file")
+
+
+def test_read_file_hints_attachments_folder(ctx):
+    (ctx.root / "attachments").mkdir()
+    (ctx.root / "attachments" / "sales.csv").write_text("a")
+    with pytest.raises(ToolError, match="attachments/sales.csv"):
+        run(ctx, "read_file", path="sales.csv")

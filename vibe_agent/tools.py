@@ -196,7 +196,11 @@ def _list_dir(ctx: ToolContext, args: dict) -> str:
 def _read_file(ctx: ToolContext, args: dict) -> str:
     path = resolve_in_root(ctx.root, _str_arg(args, "path"))
     if not path.exists():
-        raise ToolError(f"존재하지 않는 파일입니다: {args['path']}")
+        hint = ""
+        attached = ctx.root / "attachments" / Path(args["path"]).name
+        if attached.is_file():
+            hint = f" (첨부 파일은 attachments/{attached.name} 에 있어요)"
+        raise ToolError(f"존재하지 않는 파일입니다: {args['path']}{hint}")
     if path.is_dir():
         raise ToolError("폴더입니다. list_dir를 사용하세요.")
     offset = _int_arg(args, "offset", 1, 1, 10**9)

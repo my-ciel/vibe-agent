@@ -9,6 +9,7 @@ from pathlib import Path
 import streamlit as st
 
 from vibe_agent import models as model_catalog
+from vibe_agent.attachments import ALLOWED_EXTS, AttachmentView, Upload, prepare_message
 from vibe_agent.cost import CostTracker
 from vibe_agent.folder_picker import pick_folder
 from vibe_agent.llm import LLMError, OpenRouterClient, fetch_key_info
@@ -96,11 +97,20 @@ def render_tool(entry: ToolEntry, preview: str | None) -> None:
             st.code(shown, language=None)
 
 
+def render_attachment(view: AttachmentView) -> None:
+    if view.image is not None:
+        st.image(view.image, width=240, caption=f"📎 {view.path}")
+    else:
+        st.caption(f"📎 {view.path}" + (f" · {view.note}" if view.note else ""))
+
+
 def render_history(agent: Agent) -> None:
     for turn in build_turns(agent.messages[1:]):
         with st.chat_message(turn.role):
             for block in turn.blocks:
-                if block.tool is None:
+                if block.attachment is not None:
+                    render_attachment(block.attachment)
+                elif block.tool is None:
                     st.markdown(block.text)
                 elif block.tool.output is not None:  # 결과 없는 호출은 승인 카드/실행 중 표시가 담당
                     render_tool(block.tool, agent.previews.get(block.tool.id))
@@ -236,6 +246,8 @@ with st.sidebar:
         st.warning("이 모델은 도구 호출을 지원하지 않아 코딩 에이전트로 쓸 수 없어요.")
     elif info and info.prompt_per_m is not None and info.completion_per_m is not None:
         st.caption(f"가격(100만 토큰당): 입력 ${info.prompt_per_m:.2f} · 출력 ${info.completion_per_m:.2f}")
+    if info and info.supports_images is not None:
+        st.caption("🖼️ 이미지 입력 가능" if info.supports_images else "🖼️ 이미지는 볼 수 없는 모델 (텍스트/코드 파일은 가능)")
 
     limit = st.number_input("세션 최대 비용 ($)", min_value=0.0, value=1.0, step=0.5, help="이 금액에 닿으면 에이전트가 멈춰요. 0이면 제한 없음")
     auto_edits = st.toggle("파일 수정은 묻지 않고 진행", value=False, help="명령 실행은 계속 물어봐요. 변경 내용은 기록에서 볼 수 있어요.")
@@ -279,13 +291,28 @@ render_history(agent)
 
 waiting = S.pending is not None
 prompt = st.chat_input(
-    "위의 승인 요청에 먼저 답해 주세요" if waiting else "무엇을 만들어볼까요?", disabled=waiting
+    "위의 승인 요청에 먼저 답해 주세요" if waiting else "무엇을 만들어볼까요? (📎 이미지·파일 첨부 가능)",
+    disabled=waiting,
+    accept_file="multiple",
+    file_type=ALLOWED_EXTS,
 )
 if prompt and S.pending is None:
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    agent.submit(prompt)
-    S.run_requested = True
+    uploads = [Upload(f.name, f.getvalue()) for f in prompt.files]
+    prepared = prepare_message(prompt.text or "", uploads, agent.root, vision=info.supports_images if info else None)
+    for note in prepared.notes:
+        st.warning(note)
+    if prepared.saved:
+        st.toast(f"작업 폴더의 attachments/ 에 {len(prepared.saved)}개 저장했어요")
+    if prepared.content:
+        agent.submit(prepared.content)
+        S.run_requested = True
+        for turn in build_turns(agent.messages[-1:]):
+            with st.chat_message("user"):
+                for block in turn.blocks:
+                    if block.attachment is not None:
+                        render_attachment(block.attachment)
+                    else:
+                        st.markdown(block.text)
 
 if S.run_requested:
     drive(agent, cost_placeholder, limit)

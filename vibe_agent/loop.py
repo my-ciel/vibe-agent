@@ -108,8 +108,8 @@ class Agent:
 
     # -- 입력
 
-    def submit(self, text: str) -> None:
-        self.messages.append({"role": "user", "content": text})
+    def submit(self, content: str | list[dict[str, Any]]) -> None:
+        self.messages.append({"role": "user", "content": content})
         self.steps = 0
 
     def decide(self, call_id: str, approved: bool) -> None:

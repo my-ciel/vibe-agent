@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from .attachments import AttachmentView, parse_user_content
 from .loop import DENIED_MESSAGE
 
 TOOL_ICONS = {
@@ -37,6 +38,7 @@ class ToolEntry:
 class Block:
     text: str = ""
     tool: ToolEntry | None = None
+    attachment: AttachmentView | None = None
 
 
 @dataclass
@@ -72,7 +74,10 @@ def build_turns(messages: list[dict]) -> list[Turn]:
     for message in messages:
         role = message["role"]
         if role == "user":
-            turns.append(Turn("user", [Block(text=message["content"])]))
+            text, attachments = parse_user_content(message["content"])
+            blocks = [Block(text=text)] if text else []
+            blocks += [Block(attachment=a) for a in attachments]
+            turns.append(Turn("user", blocks))
         elif role == "assistant":
             if not turns or turns[-1].role != "assistant":
                 turns.append(Turn("assistant"))
