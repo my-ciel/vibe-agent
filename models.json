@@ -1,10 +1,10 @@
 {
-  "_note": "강사용: 수강생에게 보여줄 모델 목록입니다. id는 OpenRouter 모델 페이지의 ID와 정확히 같아야 합니다. 앱 사이드바에서 가격/도구 지원 여부가 자동 검증됩니다.",
+  "_note": "강사용: 수강생에게 보여줄 모델 목록입니다. 첫 번째가 기본 모델이에요. id는 OpenRouter 모델 페이지의 ID와 정확히 같아야 합니다. 앱 사이드바에서 가격/도구·이미지 지원 여부가 자동 검증됩니다.",
   "models": [
-    {"id": "openai/gpt-4o-mini", "label": "GPT-4o mini (저렴, 무난)"},
-    {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash (빠름)"},
-    {"id": "deepseek/deepseek-chat", "label": "DeepSeek Chat (매우 저렴)"},
-    {"id": "qwen/qwen3-coder", "label": "Qwen3 Coder (코딩 특화)"},
-    {"id": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5 (품질 좋음)"}
+    {"id": "anthropic/claude-haiku-5.5", "label": "Claude Haiku 5.5 (추천: 품질·가격 균형)"},
+    {"id": "deepseek/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash (빠르고 저렴)"},
+    {"id": "openai/gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+    {"id": "z-ai/glm-5.3-flash", "label": "GLM 5.3 Flash"},
+    {"id": "anthropic/claude-sonnet-5.5", "label": "Claude Sonnet 5.5 (고품질, 약 20배 비쌈)"}
   ]
 }
