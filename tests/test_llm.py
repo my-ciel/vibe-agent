@@ -102,3 +102,13 @@ def test_client_sends_expected_request():
     assert seen["model"] == "a/b" and seen["stream"] is True and seen["tools"] == [{"t": 1}]
     assert seen["extra_body"] == {"usage": {"include": True}}
     assert events[0] == TextChunk("hi")
+
+
+def test_error_detail_uses_body_message_only():
+    request = httpx.Request("POST", "https://x")
+    inner = {"message": "nope/x is not a valid model ID", "code": 400}
+    for body in (inner, {"error": inner, "user_id": "secret-id"}):  # SDK 형태 / 전체 본문 형태
+        exc = openai.BadRequestError("Error code: 400 - {...}", response=httpx.Response(400, request=request), body=body)
+        message = str(translate_error(exc))
+        assert "모델 ID가 올바르지 않습니다" in message and "not a valid model ID" in message
+        assert "secret-id" not in message and "Error code" not in message

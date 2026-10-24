@@ -106,8 +106,19 @@ def parse_stream(chunks: Iterable[Any]) -> Iterator[StreamEvent]:
     yield Finished(finish_reason)
 
 
+def _error_detail(exc: Exception) -> str:
+    """응답 본문의 error.message만 꺼낸다 (없으면 예외 문자열)."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        # openai SDK는 응답의 error 항목만 body로 주지만, 전체 본문이 오는 경우도 대비한다.
+        error = body.get("error") if isinstance(body.get("error"), dict) else body
+        if error.get("message"):
+            return str(error["message"])[:300]
+    return str(getattr(exc, "message", None) or exc)[:300]
+
+
 def translate_error(exc: Exception) -> LLMError:
-    detail = str(getattr(exc, "message", None) or exc)[:300]
+    detail = _error_detail(exc)
     if isinstance(exc, openai.AuthenticationError):
         return LLMError("API 키가 올바르지 않거나 만료되었습니다. 키를 다시 확인해 주세요.")
     if isinstance(exc, openai.APIStatusError):
@@ -118,8 +129,10 @@ def translate_error(exc: Exception) -> LLMError:
             return LLMError(f"이 키로는 요청할 수 없습니다 (권한/지역 제한 또는 모델 접근 불가): {detail}")
         if status == 429:
             return LLMError("요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.")
+        if status == 400 and "valid model" in detail.lower():
+            return LLMError(f"모델 ID가 올바르지 않습니다. 사이드바에서 모델을 다시 선택하거나 철자를 확인하세요. ({detail})")
         if status == 404 or (status == 400 and "tool" in detail.lower()):
-            return LLMError(f"이 모델은 코딩 에이전트(도구 호출)를 지원하지 않을 수 있습니다. 다른 모델을 선택해 보세요. ({detail})")
+            return LLMError(f"이 모델은 코딩 에이전트(도구 호출)를 지원하지 않거나 지금 이용할 수 없습니다. 다른 모델을 선택해 보세요. ({detail[:120]})")
         if status >= 500:
             return LLMError(f"OpenRouter/모델 제공자 서버 오류입니다. 잠시 후 다시 시도하세요. ({status})")
         return LLMError(f"요청이 거절되었습니다 ({status}): {detail}")
