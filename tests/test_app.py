@@ -148,3 +148,10 @@ def test_model_browser_selects_from_catalog(tmp_path, monkeypatch):
     browse.set_value("x/pricey").run()
     assert any("비싼 모델" in w.value for w in at.sidebar.warning)
     assert at.main.caption[0].value.endswith("x/pricey")
+
+
+def test_project_rules_file_is_announced_in_header(tmp_path):
+    at, project, _ = make_app(tmp_path, {"text": "ok"})
+    (project / "GEMINI.md").write_text("# 규칙", encoding="utf-8")
+    at.run()
+    assert "프로젝트 지침: GEMINI.md" in at.main.caption[0].value

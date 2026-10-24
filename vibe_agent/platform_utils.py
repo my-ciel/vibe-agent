@@ -4,10 +4,12 @@ from __future__ import annotations
 import locale
 import os
 import platform
+import shutil
 import signal
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
@@ -66,10 +68,68 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
+def _is_inside(entry: str, folder: Path) -> bool:
+    try:
+        return Path(entry).resolve().is_relative_to(folder)
+    except (OSError, ValueError):
+        return False
+
+
+def _has_real_python(path: str) -> bool:
+    for name in ("python", "python3"):
+        found = shutil.which(name, path=path)
+        # 윈도우의 WindowsApps\python.exe는 파이썬이 아니라 스토어 안내용 바로가기다.
+        if found and "windowsapps" not in found.lower():
+            return True
+    return False
+
+
+def command_env(
+    project_root: str | Path,
+    environ: dict[str, str] | None = None,
+    prefix: str | None = None,
+    base_prefix: str | None = None,
+    base_python: str | None = None,
+    windows: bool | None = None,
+) -> dict[str, str]:
+    """에이전트가 실행하는 명령의 환경.
+
+    - 앱 자신의 가상환경이 새어 나오지 않게 한다 (그대로면 `python`이 앱의 파이썬이 되어
+      streamlit이 보이고 pip도 없다).
+    - 프로젝트에 .venv가 있으면 활성화된 것처럼 PATH/VIRTUAL_ENV를 맞춘다. 명령마다 새 셸이라
+      `activate`가 유지되지 않으므로 앱이 대신 항상 적용해 준다.
+    - 시스템에 진짜 파이썬이 없으면(윈도우 수강생 등) 앱이 쓰는 기본 파이썬을 제공한다.
+    """
+    env = dict(os.environ if environ is None else environ)
+    prefix = prefix or sys.prefix
+    base_prefix = base_prefix or sys.base_prefix
+    base_python = base_python or getattr(sys, "_base_executable", sys.executable)
+    windows = IS_WINDOWS if windows is None else windows
+
+    entries = [e for e in env.get("PATH", "").split(os.pathsep) if e]
+    if prefix != base_prefix:  # 앱이 가상환경 안에서 실행 중일 때만 그 환경을 걷어낸다
+        app_env = Path(prefix).resolve()
+        entries = [e for e in entries if not _is_inside(e, app_env)]
+        for name in ("VIRTUAL_ENV", "PYTHONHOME", "__PYVENV_LAUNCHER__"):
+            env.pop(name, None)
+
+    venv = Path(project_root) / ".venv"
+    venv_bin = venv / ("Scripts" if windows else "bin")
+    if (venv_bin / ("python.exe" if windows else "python")).exists():
+        env["VIRTUAL_ENV"] = str(venv)
+        entries.insert(0, str(venv_bin))
+    elif not _has_real_python(os.pathsep.join(entries)):
+        entries.insert(0, str(Path(base_python).parent))
+
+    env["PATH"] = os.pathsep.join(entries)
+    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    return env
+
+
 def run_shell(
     command: str, cwd: str, timeout: float = 60, max_output: int = 20_000
 ) -> CommandResult:
-    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    env = command_env(cwd)
     if IS_WINDOWS:
         # 한글 윈도우(cp949)에서도 출력이 깨지지 않도록 콘솔 코드페이지를 UTF-8로 맞춘다.
         full_command = f"chcp 65001>nul & {command}"

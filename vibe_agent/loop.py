@@ -24,6 +24,7 @@ from .llm import (
     UsageInfo,
 )
 from .platform_utils import truncate_middle
+from .project_rules import load_project_rules
 from .prompts import build_system_prompt
 from .tools import Tool, ToolContext, build_tools
 
@@ -102,9 +103,14 @@ class Agent:
     def __post_init__(self) -> None:
         self.root = Path(self.root).resolve()
         if not self.messages:
-            self.messages.append(
-                {"role": "system", "content": build_system_prompt(self.root, self.instructions)}
-            )
+            self.messages.append({"role": "system", "content": ""})
+        self._refresh_system_prompt()
+
+    def _refresh_system_prompt(self) -> None:
+        """프로젝트 지침 파일(GEMINI.md 등)은 에이전트가 직접 고치기도 하므로 LLM 호출 전에 다시 읽는다."""
+        self.messages[0]["content"] = build_system_prompt(
+            self.root, self.instructions, load_project_rules(self.root)
+        )
 
     # -- 입력
 
@@ -138,6 +144,7 @@ class Agent:
                 )
                 return
             self.steps += 1
+            self._refresh_system_prompt()
             try:
                 yield from self._call_llm(schemas)
             except LLMError as exc:

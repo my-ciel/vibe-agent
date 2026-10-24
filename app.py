@@ -12,6 +12,7 @@ from vibe_agent import models as model_catalog
 from vibe_agent.attachments import ALLOWED_EXTS, AttachmentView, Upload, prepare_message
 from vibe_agent.cost import CostTracker
 from vibe_agent.instructions import load_instructions
+from vibe_agent.project_rules import find_rule_files
 from vibe_agent.folder_picker import pick_folder
 from vibe_agent.llm import LLMError, OpenRouterClient, fetch_key_info
 from vibe_agent.loop import (
@@ -310,7 +311,10 @@ if agent is None:
     st.chat_input("먼저 왼쪽에서 키와 작업 폴더를 설정해 주세요", disabled=True)
     st.stop()
 
-st.caption(f"📂 {agent.root}  ·  🧠 {agent.model}")
+rule_files = [p.name for p in find_rule_files(agent.root)]
+st.caption(
+    f"📂 {agent.root}  ·  🧠 {agent.model}" + (f"  ·  📘 프로젝트 지침: {', '.join(rule_files)}" if rule_files else "")
+)
 render_history(agent)
 
 waiting = S.pending is not None
