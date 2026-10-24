@@ -281,9 +281,13 @@ def _preview_write(ctx: ToolContext, args: dict) -> str:
     path, _, old, new = _plan_write(ctx, args)
     rel = relative_display(ctx.root, path)
     if not path.exists():
-        shown = new.split("\n")[:60]
-        more = "" if len(shown) >= new.count("\n") + 1 else "\n..."
-        return f"새 파일: {rel} ({new.count(chr(10)) + 1}줄)\n" + "\n".join(shown) + more
+        lines = new.split("\n")
+        if lines[-1] == "":
+            lines.pop()
+        shown = [f"+{line}" for line in lines[:MAX_PREVIEW_LINES]]
+        if len(lines) > MAX_PREVIEW_LINES:
+            shown.append(f"... ({len(lines) - MAX_PREVIEW_LINES}줄 더 있음)")
+        return f"새 파일: {rel} ({len(lines)}줄)\n" + "\n".join(shown)
     return _diff(rel, old, new)
 
 

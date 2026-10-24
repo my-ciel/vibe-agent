@@ -153,3 +153,38 @@ class OpenRouterClient:
             raise
         except openai.OpenAIError as exc:
             raise translate_error(exc) from exc
+
+
+@dataclass
+class KeyInfo:
+    label: str = ""
+    limit: float | None = None  # 키에 설정된 한도(USD). 없으면 None
+    usage: float = 0.0
+    limit_remaining: float | None = None
+    is_free_tier: bool = False
+
+
+def fetch_key_info(api_key: str, base_url: str = OPENROUTER_BASE_URL, http: Any = None) -> KeyInfo:
+    """키가 유효한지, 한도가 얼마나 남았는지 확인한다."""
+    import httpx
+
+    try:
+        response = (http or httpx).get(
+            f"{base_url}/auth/key",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+    except httpx.HTTPError:
+        raise LLMError("OpenRouter에 연결할 수 없습니다. 인터넷 연결을 확인해 주세요.") from None
+    if response.status_code in (401, 403):
+        raise LLMError("API 키가 올바르지 않거나 만료되었습니다. 키를 다시 확인해 주세요.")
+    if response.status_code != 200:
+        raise LLMError(f"키 정보를 확인하지 못했습니다 (HTTP {response.status_code}).")
+    data = response.json().get("data") or {}
+    return KeyInfo(
+        label=str(data.get("label") or ""),
+        limit=data.get("limit"),
+        usage=float(data.get("usage") or 0),
+        limit_remaining=data.get("limit_remaining"),
+        is_free_tier=bool(data.get("is_free_tier")),
+    )

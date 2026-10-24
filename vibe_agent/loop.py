@@ -96,6 +96,7 @@ class Agent:
     tools: dict[str, Tool] = field(default_factory=build_tools)
     messages: list[dict] = field(default_factory=list)
     decisions: dict[str, bool] = field(default_factory=dict)
+    previews: dict[str, str] = field(default_factory=dict)  # call_id -> 승인 때 보여준 미리보기
     steps: int = 0
 
     def __post_init__(self) -> None:
@@ -182,6 +183,7 @@ class Agent:
                 decision = self.decisions.get(call.id)
                 if decision is None:
                     preview = tool.preview(ToolContext(self.root), args) if tool.preview else ""
+                    self.previews[call.id] = preview
                     yield ApprovalRequest(call, args, preview)
                     return False
                 if not decision:
