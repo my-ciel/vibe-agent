@@ -3,19 +3,11 @@
   "models": [
     {
       "id": "anthropic/claude-haiku-5.5",
-      "label": "💛 Haiku 5.5 · 추천"
-    },
-    {
-      "id": "qwen/qwen3.7-flash",
-      "label": "💚 Qwen 3.7 Flash · 최저가"
-    },
-    {
-      "id": "z-ai/glm-5.3-flash",
-      "label": "💚 GLM 5.3 Flash · 저렴"
+      "label": "💛 Claude Haiku 5.5 · 기본(추천)"
     },
     {
       "id": "deepseek/deepseek-v4.1-flash",
-      "label": "💚 DeepSeek V4.1 · 저렴"
+      "label": "💚 DeepSeek V4.1 Flash · 저렴"
     },
     {
       "id": "openai/gpt-5.6-luna",
@@ -23,7 +15,7 @@
     },
     {
       "id": "anthropic/claude-sonnet-5.5",
-      "label": "🔴 Sonnet 5.5 · 고품질(비쌈)"
+      "label": "🔴 Claude Sonnet 5.5 · 고품질(비쌈)"
     }
   ]
 }
