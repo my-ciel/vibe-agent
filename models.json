@@ -10,6 +10,10 @@
       "label": "💚 DeepSeek V4.1 Flash · 저렴"
     },
     {
+      "id": "qwen/qwen3.7-flash",
+      "label": "💚 Qwen 3.7 Flash · 최저가"
+    },
+    {
       "id": "openai/gpt-5.6-luna",
       "label": "💛 GPT-5.6 Luna · 균형"
     },
