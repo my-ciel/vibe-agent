@@ -1,0 +1,13 @@
+[project]
+name = "vibe-agent"
+version = "0.1.0"
+description = "OpenRouter 키만으로 쓰는 수업용 간단 코딩 에이전트"
+requires-python = ">=3.10"
+dependencies = ["openai>=1.50"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
