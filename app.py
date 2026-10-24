@@ -12,6 +12,7 @@ from vibe_agent import models as model_catalog
 from vibe_agent.attachments import ALLOWED_EXTS, AttachmentView, Upload, prepare_message
 from vibe_agent.cost import CostTracker
 from vibe_agent.instructions import load_instructions
+from vibe_agent.processes import ProcessManager
 from vibe_agent.project_rules import find_rule_files
 from vibe_agent.folder_picker import pick_folder
 from vibe_agent.llm import LLMError, OpenRouterClient, fetch_key_info
@@ -65,7 +66,23 @@ def on_pick_folder() -> None:
         S.notice = "폴더 선택창을 열 수 없거나 취소되었습니다. 경로를 직접 입력해 주세요."
 
 
+def close_agent() -> None:
+    """현재 대화가 띄운 백그라운드 프로세스를 정리하고 에이전트를 버린다."""
+    if S.get("agent") is not None:
+        S.agent.close()
+    S.agent = None
+
+
+def on_stop_process(proc_id: str) -> None:
+    if S.get("agent") is not None:
+        try:
+            S.agent.processes.stop(proc_id)
+        except Exception:
+            pass
+
+
 def on_new_chat() -> None:
+    close_agent()
     S.agent = None
     S.agent_sig = None
     S.pending = None
@@ -93,7 +110,7 @@ def render_tool(entry: ToolEntry, preview: str | None) -> None:
     with st.expander(tool_title(entry), expanded=False):
         if entry.name in DIFF_TOOLS and preview:
             st.code(preview, language="diff")
-        elif entry.name == "run_command":
+        elif entry.name in ("run_command", "start_process"):
             st.code("$ " + str(entry.args.get("command", "")), language="bash")
         if entry.output:
             shown = entry.output if len(entry.output) <= 3000 else entry.output[:3000] + "\n... (이하 생략)"
@@ -134,12 +151,27 @@ def render_approval(request: ApprovalRequest) -> None:
     entry = ToolEntry(request.call.id, request.call.name, request.args)
     with st.chat_message("assistant"):
         st.warning(f"**승인이 필요해요** · {tool_title(entry).removeprefix('⏳ ')}")
-        if entry.name == "run_command":
+        if entry.name in ("run_command", "start_process"):
             st.caption("이 명령은 내 컴퓨터에서 실제로 실행됩니다. 무슨 일을 하는지 이해되지 않으면 거절하세요.")
         st.code(request.preview, language="diff" if entry.name in DIFF_TOOLS else "bash")
         approve, reject, _ = st.columns([1, 1, 4])
         approve.button("✅ 승인", type="primary", key=f"ok-{entry.id}", on_click=on_decide, args=(entry.id, True))
         reject.button("🚫 거절", key=f"no-{entry.id}", on_click=on_decide, args=(entry.id, False))
+
+
+def render_processes(placeholder, agent: Agent | None) -> None:
+    """실행 중인 백그라운드 프로세스(접속 링크, 중지 버튼)."""
+    running = agent.processes.running() if agent else []
+    with placeholder.container():
+        if not running:
+            return
+        st.divider()
+        st.caption("▶️ 실행 중인 프로그램")
+        for proc in running:
+            st.markdown(f"**{proc.name}**  \n`{proc.command[:60]}`")
+            for url in proc.urls()[:2]:
+                st.link_button(f"🔗 {url}", url)
+            st.button("⏹️ 중지", key=f"stop-{proc.id}", on_click=on_stop_process, args=(proc.id,))
 
 
 def render_welcome() -> None:
@@ -206,6 +238,12 @@ def drive(agent: Agent, cost_placeholder, limit: float) -> None:
 
 # ------------------------------------------------------------------ 메인
 
+@st.cache_resource
+def _cleanup_leftover_processes() -> int:
+    return ProcessManager().cleanup_stale()
+
+
+_cleanup_leftover_processes()
 _init_state()
 choices = model_catalog.load_model_choices()
 labels = {m["id"]: m.get("label", m["id"]) for m in choices}
@@ -213,6 +251,7 @@ labels = {m["id"]: m.get("label", m["id"]) for m in choices}
 with st.sidebar:
     st.title("🤖 Vibe Agent")
     cost_placeholder = st.empty()  # 항상 보이도록 맨 위에 둔다
+    process_placeholder = st.empty()
 
     st.divider()
     st.text_input("OpenRouter API 키", type="password", key="api_key", placeholder="sk-or-...")
@@ -291,6 +330,7 @@ agent: Agent | None = None
 if ready:
     signature = (api_key, str(root.resolve()))
     if S.agent is None or S.agent_sig != signature:
+        close_agent()
         factory = S.get("llm_factory", OpenRouterClient)
         S.agent = Agent(
             llm=factory(api_key), model=model, root=root, tracker=CostTracker(), instructions=load_instructions()
@@ -307,6 +347,7 @@ if ready:
 render_cost(cost_placeholder, agent, limit)
 
 if agent is None:
+    render_processes(process_placeholder, None)
     render_welcome()
     st.chat_input("먼저 왼쪽에서 키와 작업 폴더를 설정해 주세요", disabled=True)
     st.stop()
@@ -348,3 +389,4 @@ if S.run_requested:
         st.rerun()  # 입력창을 잠그고 승인 카드를 기록 아래에 정상 위치로 다시 그린다
 if S.pending is not None:
     render_approval(S.pending)
+render_processes(process_placeholder, agent)

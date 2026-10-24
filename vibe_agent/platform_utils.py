@@ -122,7 +122,7 @@ def command_env(
         entries.insert(0, str(Path(base_python).parent))
 
     env["PATH"] = os.pathsep.join(entries)
-    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
     return env
 
 

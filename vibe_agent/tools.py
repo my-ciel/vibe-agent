@@ -5,6 +5,7 @@ import difflib
 import fnmatch
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +30,7 @@ DEFAULT_READ_LINES = 400
 MAX_READ_LINES = 2000
 DEFAULT_COMMAND_TIMEOUT = 120
 MAX_COMMAND_TIMEOUT = 900
+MAX_READ_LOG_CHARS = 8_000
 
 _ENCODINGS = ("utf-8", "cp949")  # 한국어 윈도우의 기존 파일도 읽을 수 있게 한다.
 
@@ -36,6 +38,7 @@ _ENCODINGS = ("utf-8", "cp949")  # 한국어 윈도우의 기존 파일도 읽�
 @dataclass(frozen=True)
 class ToolContext:
     root: Path
+    processes: Any = None  # ProcessManager (백그라운드 실행 도구용)
 
 
 @dataclass(frozen=True)
@@ -362,6 +365,79 @@ def _run_command(ctx: ToolContext, args: dict) -> str:
     return f"[종료 코드 {result.exit_code}]\n{result.output}"
 
 
+# ---------------------------------------------------------------- 백그라운드 프로세스
+
+
+def _manager(ctx: ToolContext) -> Any:
+    if ctx.processes is None:
+        raise ToolError("이 환경에서는 백그라운드 실행을 사용할 수 없어요.")
+    return ctx.processes
+
+
+def _process_report(proc: Any, logs: str, header: str = "") -> str:
+    if proc.running:
+        status = f"실행 중 (pid {proc.popen.pid})"
+    else:
+        status = f"종료됨 (종료 코드 {proc.exit_code})"
+    lines = [f"[{proc.id} · {proc.name}] {header}{status}"]
+    urls = proc.urls()
+    if urls:
+        lines.append("접속 주소: " + ", ".join(urls))
+    lines.append("--- 새 로그 ---")
+    lines.append(pu.truncate_middle(logs.strip("\n"), MAX_READ_LOG_CHARS) if logs.strip() else "(새 로그 없음)")
+    return "\n".join(lines)
+
+
+def _preview_start_process(ctx: ToolContext, args: dict) -> str:
+    command = _str_arg(args, "command")
+    reason = check_command(command)
+    if reason:
+        raise SandboxError(reason)
+    return f"$ {command}\n(백그라운드로 계속 실행됩니다 · 작업 폴더: {ctx.root})"
+
+
+def _start_process(ctx: ToolContext, args: dict) -> str:
+    command = _str_arg(args, "command")
+    reason = check_command(command)
+    if reason:
+        raise SandboxError(reason)
+    manager = _manager(ctx)
+    wait = _int_arg(args, "startup_wait", 5, 0, 30)
+    proc = manager.start(command, str(ctx.root), str(args.get("name") or ""))
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and proc.running and not proc.urls():
+        time.sleep(0.2)
+    if proc.urls():
+        time.sleep(0.3)  # 주소와 함께 나오는 나머지 로그를 조금 더 모은다
+    return _process_report(proc, proc.read_new(), "시작함 · ")
+
+
+def _read_process_output(ctx: ToolContext, args: dict) -> str:
+    manager = _manager(ctx)
+    proc = manager.get(_str_arg(args, "id"))
+    wait = _int_arg(args, "wait_seconds", 0, 0, 60)
+    if wait:
+        manager.wait_for_output(proc, wait)
+    return _process_report(proc, proc.read_new())
+
+
+def _stop_process(ctx: ToolContext, args: dict) -> str:
+    manager = _manager(ctx)
+    proc = manager.stop(_str_arg(args, "id"))
+    return _process_report(proc, proc.read_new(), "중지 요청 · ")
+
+
+def _list_processes(ctx: ToolContext, args: dict) -> str:
+    procs = _manager(ctx).all()
+    if not procs:
+        return "(실행한 프로세스 없음)"
+    return "\n".join(
+        f"{p.id} · {p.name} · {'실행 중' if p.running else f'종료됨({p.exit_code})'} · {p.command}"
+        + (f" · {', '.join(p.urls())}" if p.urls() else "")
+        for p in procs
+    )
+
+
 # ---------------------------------------------------------------- 등록
 
 
@@ -440,7 +516,7 @@ def build_tools() -> dict[str, Tool]:
         ),
         Tool(
             "run_command",
-            f"Run a shell command in the project root and return its output. Non-interactive only (stdin is closed); long-running servers will be killed at the timeout. Requires user approval. Shell: {pu.shell_description()}",
+            f"Run a shell command in the project root and return its output. Non-interactive only (stdin is closed). Anything that keeps running (servers, GUI apps) must use start_process instead; it would be killed at the timeout here. Requires user approval. Shell: {pu.shell_description()}",
             {
                 "type": "object",
                 "properties": {
@@ -452,6 +528,47 @@ def build_tools() -> dict[str, Tool]:
             _run_command,
             needs_approval=True,
             preview=_preview_command,
+        ),
+        Tool(
+            "start_process",
+            "Start a program that keeps running (web/dev server, GUI app, file watcher) in the background and return its first logs and URL. Use this instead of run_command for anything that does not exit by itself. Bind servers to localhost only (e.g. `python -m http.server 8000 --bind 127.0.0.1`, `flask run --host 127.0.0.1`, `streamlit run app.py --server.address localhost`). Requires user approval. At most 3 at once.",
+            {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "name": {"type": "string", "description": "Short label, e.g. 'web server'."},
+                    "startup_wait": {"type": "integer", "description": "Seconds to wait for startup logs/URL (max 30). Default 5."},
+                },
+                "required": ["command"],
+            },
+            _start_process,
+            needs_approval=True,
+            preview=_preview_start_process,
+        ),
+        Tool(
+            "read_process_output",
+            "Read new log output and the status of a background process started with start_process. Optionally wait for new output.",
+            {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Process id such as 'p1'."},
+                    "wait_seconds": {"type": "integer", "description": "Wait up to this many seconds for new output (max 60). Default 0."},
+                },
+                "required": ["id"],
+            },
+            _read_process_output,
+        ),
+        Tool(
+            "stop_process",
+            "Stop a background process (and everything it started).",
+            {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+            _stop_process,
+        ),
+        Tool(
+            "list_processes",
+            "List background processes started in this conversation with their status and URLs.",
+            {"type": "object", "properties": {}},
+            _list_processes,
         ),
     ]
     return {tool.name: tool for tool in tools}

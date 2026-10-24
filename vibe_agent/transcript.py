@@ -11,10 +11,12 @@ from .loop import DENIED_MESSAGE
 TOOL_ICONS = {
     "list_dir": "📁", "read_file": "📄", "grep": "🔍",
     "write_file": "✏️", "edit_file": "✏️", "run_command": "⚙️",
+    "start_process": "▶️", "read_process_output": "📜", "stop_process": "⏹️", "list_processes": "📋",
 }
 TOOL_LABELS = {
     "list_dir": "폴더 보기", "read_file": "파일 읽기", "grep": "검색",
     "write_file": "파일 쓰기", "edit_file": "파일 수정", "run_command": "명령 실행",
+    "start_process": "백그라운드 실행", "read_process_output": "실행 로그 보기", "stop_process": "실행 중지", "list_processes": "실행 목록",
 }
 
 
@@ -52,8 +54,10 @@ def tool_title(entry: ToolEntry) -> str:
     label = TOOL_LABELS.get(entry.name, entry.name)
     args = entry.args
     detail = ""
-    if entry.name == "run_command":
+    if entry.name in ("run_command", "start_process"):
         detail = str(args.get("command", ""))
+    elif "id" in args:
+        detail = str(args.get("id", ""))
     elif entry.name == "grep":
         detail = str(args.get("pattern", ""))
     elif "path" in args:

@@ -155,3 +155,20 @@ def test_project_rules_file_is_announced_in_header(tmp_path):
     (project / "GEMINI.md").write_text("# 규칙", encoding="utf-8")
     at.run()
     assert "프로젝트 지침: GEMINI.md" in at.main.caption[0].value
+
+
+def test_running_process_panel_and_cleanup_on_new_chat(tmp_path):
+    import sys
+
+    at, project, _ = make_app(tmp_path, {"text": "ok"})
+    at.run()
+    agent = at.session_state["agent"]
+    agent.processes._registry = tmp_path / "reg.json"
+    proc = agent.processes.start(f'"{sys.executable}" -c "import time; print(\'http://localhost:7777\', flush=True); time.sleep(60)"', str(project), "웹")
+    import time as _t
+    _t.sleep(1.0)
+    at.run()
+    assert any("웹" in m.value for m in at.sidebar.markdown)
+    assert any(b.label == "⏹️ 중지" for b in at.sidebar.button)
+    next(b for b in at.sidebar.button if "새 대화" in b.label).click().run()
+    assert not proc.running  # 새 대화를 시작하면 띄운 프로그램도 정리된다

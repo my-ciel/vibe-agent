@@ -24,6 +24,7 @@ from .llm import (
     UsageInfo,
 )
 from .platform_utils import truncate_middle
+from .processes import ProcessManager
 from .project_rules import load_project_rules
 from .prompts import build_system_prompt
 from .tools import Tool, ToolContext, build_tools
@@ -98,6 +99,7 @@ class Agent:
     messages: list[dict] = field(default_factory=list)
     decisions: dict[str, bool] = field(default_factory=dict)
     previews: dict[str, str] = field(default_factory=dict)  # call_id -> 승인 때 보여준 미리보기
+    processes: ProcessManager = field(default_factory=ProcessManager)
     steps: int = 0
 
     def __post_init__(self) -> None:
@@ -111,6 +113,10 @@ class Agent:
         self.messages[0]["content"] = build_system_prompt(
             self.root, self.instructions, load_project_rules(self.root)
         )
+
+    def close(self) -> None:
+        """대화를 끝낼 때 띄워 둔 백그라운드 프로세스를 정리한다."""
+        self.processes.stop_all()
 
     # -- 입력
 
@@ -199,7 +205,7 @@ class Agent:
                     return True
 
             yield ToolStart(call, args)
-            output = tool.run(ToolContext(self.root), args)
+            output = tool.run(ToolContext(self.root, self.processes), args)
             ok = True
         except ToolError as exc:
             output, ok = f"오류: {exc}", False

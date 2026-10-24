@@ -4,7 +4,7 @@ from vibe_agent.cost import Usage
 from vibe_agent.llm import Finished, TextChunk, ToolCall, ToolCallsReady, UsageInfo
 
 
-def call(call_id: str, name: str, **args) -> ToolCall:
+def call(call_id: str, name: str, /, **args) -> ToolCall:
     import json
 
     return ToolCall(call_id, name, json.dumps(args))

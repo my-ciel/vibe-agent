@@ -54,6 +54,16 @@ def run_check() -> int:
     return 1 if any(c.status == "fail" for c in checks) else 0
 
 
+def cleanup_leftovers() -> None:
+    """앱이 종료된 뒤 남은 백그라운드 프로그램(에이전트가 띄운 서버 등)을 정리한다."""
+    try:
+        from vibe_agent.processes import ProcessManager
+
+        ProcessManager().cleanup_stale()
+    except Exception:
+        pass  # 정리 실패가 종료를 막으면 안 된다
+
+
 def run_app() -> int:
     port = find_port()
     url = f"http://localhost:{port}"
@@ -85,6 +95,8 @@ def run_app() -> int:
         except subprocess.TimeoutExpired:
             process.kill()
         return 0
+    finally:
+        cleanup_leftovers()
 
 
 def main() -> int:
