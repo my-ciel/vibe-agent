@@ -131,3 +131,20 @@ def test_new_chat_resets(tmp_path):
     assert "안녕" in texts(at)
     next(b for b in at.sidebar.button if "새 대화" in b.label).click().run()
     assert "안녕" not in texts(at)
+
+
+def test_model_browser_selects_from_catalog(tmp_path, monkeypatch):
+    cat = {
+        "x/cheap": models.ModelInfo("x/cheap", 0.1, 0.2, True, True, 5),
+        "x/pricey": models.ModelInfo("x/pricey", 5, 25, True, False, 4),
+    }
+    monkeypatch.setattr(models, "fetch_catalog", lambda *a, **k: cat)
+    at, project, llm = make_app(tmp_path, {"text": "ok"})
+    at.run()
+    at.sidebar.selectbox[0].set_value("__browse__").run()
+    assert not at.exception
+    browse = at.sidebar.selectbox[1]
+    assert browse.options == ["x/cheap  ·  $0.10 / $0.20  ·  🖼️", "x/pricey  ·  $5.00 / $25.00"]
+    browse.set_value("x/pricey").run()
+    assert any("비싼 모델" in w.value for w in at.sidebar.warning)
+    assert at.main.caption[0].value.endswith("x/pricey")

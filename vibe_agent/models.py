@@ -31,6 +31,7 @@ class ModelInfo:
     completion_per_m: float | None
     supports_tools: bool | None  # 알 수 없으면 None
     supports_images: bool | None = None  # 이미지 입력 가능 여부, 알 수 없으면 None
+    created: int = 0  # 출시 시각(unix) - 최신순 정렬용
 
 
 def _per_million(value: Any) -> float | None:
@@ -55,6 +56,7 @@ def parse_catalog(payload: dict) -> dict[str, ModelInfo]:
             completion_per_m=_per_million(pricing.get("completion")),
             supports_tools=("tools" in params) if isinstance(params, list) else None,
             supports_images=("image" in modalities) if isinstance(modalities, list) else None,
+            created=int(item.get("created") or 0),
         )
     return catalog
 
@@ -79,3 +81,29 @@ def fetch_catalog(base_url: str = OPENROUTER_BASE_URL, http: Any = None) -> dict
         catalog = {}
     _cache = (now, catalog)
     return catalog
+
+
+def browseable_models(catalog: dict[str, ModelInfo]) -> list[ModelInfo]:
+    """에이전트로 쓸 수 있는(도구 호출 지원) 일반 모델을 최신순으로. 배치용(:batch)과 별칭(~)은 제외."""
+    models = [
+        m for m in catalog.values()
+        if m.supports_tools and not m.id.endswith(":batch") and not m.id.startswith("~")
+        and m.prompt_per_m is not None and m.completion_per_m is not None
+    ]
+    return sorted(models, key=lambda m: (-m.created, m.id))
+
+
+def describe(info: ModelInfo) -> str:
+    """선택 목록에 보여줄 한 줄 설명."""
+    if info.prompt_per_m == 0 and info.completion_per_m == 0:
+        price = "무료(요청 제한 있음)"
+    else:
+        price = f"${info.prompt_per_m:.2f} / ${info.completion_per_m:.2f}"
+    return f"{info.id}  ·  {price}" + ("  ·  🖼️" if info.supports_images else "")
+
+
+EXPENSIVE_OUTPUT_PER_M = 5.0
+
+
+def is_expensive(info: ModelInfo | None) -> bool:
+    return bool(info and info.completion_per_m is not None and info.completion_per_m >= EXPENSIVE_OUTPUT_PER_M)

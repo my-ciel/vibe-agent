@@ -11,6 +11,7 @@ import streamlit as st
 from vibe_agent import models as model_catalog
 from vibe_agent.attachments import ALLOWED_EXTS, AttachmentView, Upload, prepare_message
 from vibe_agent.cost import CostTracker
+from vibe_agent.instructions import load_instructions
 from vibe_agent.folder_picker import pick_folder
 from vibe_agent.llm import LLMError, OpenRouterClient, fetch_key_info
 from vibe_agent.loop import (
@@ -27,6 +28,7 @@ from vibe_agent.settings import load_settings, save_settings
 from vibe_agent.transcript import ToolEntry, build_turns, tool_title
 
 CUSTOM_MODEL = "__custom__"
+BROWSE_MODEL = "__browse__"
 EDIT_AUTO_APPROVE = {"write_file", "edit_file"}
 DIFF_TOOLS = {"write_file", "edit_file"}
 
@@ -228,17 +230,35 @@ with st.sidebar:
         S.notice = None
 
     st.divider()
+    catalog = model_catalog.fetch_catalog()
+    extra_labels = {BROWSE_MODEL: "🔎 전체 모델에서 찾기…", CUSTOM_MODEL: "직접 입력…"}
     st.selectbox(
         "모델",
-        [m["id"] for m in choices] + [CUSTOM_MODEL],
+        [m["id"] for m in choices] + [BROWSE_MODEL, CUSTOM_MODEL],
         key="model_choice",
-        format_func=lambda i: "직접 입력…" if i == CUSTOM_MODEL else labels.get(i, i),
+        format_func=lambda i: extra_labels.get(i) or labels.get(i, i),
     )
     if S.model_choice == CUSTOM_MODEL:
         st.text_input("모델 ID", key="custom_model", placeholder="provider/model-name")
-    model = (S.custom_model if S.model_choice == CUSTOM_MODEL else S.model_choice).strip()
-
-    catalog = model_catalog.fetch_catalog() if model else {}
+        model = S.custom_model.strip()
+    elif S.model_choice == BROWSE_MODEL:
+        browse = model_catalog.browseable_models(catalog)
+        if browse:
+            by_id = {m.id: m for m in browse}
+            st.selectbox(
+                "모델 검색 (글자를 입력해 찾을 수 있어요)",
+                list(by_id),
+                index=None,
+                placeholder="모델을 선택하세요",
+                key="browse_model",
+                format_func=lambda i: model_catalog.describe(by_id[i]),
+            )
+            model = S.get("browse_model") or ""
+        else:
+            st.info("모델 목록을 불러올 수 없어요. 인터넷 연결을 확인하거나 '직접 입력…'을 쓰세요.")
+            model = ""
+    else:
+        model = S.model_choice
     info = catalog.get(model)
     if catalog and model and info is None:
         st.warning("OpenRouter 목록에 없는 모델 ID예요. 철자를 확인하세요.")
@@ -246,6 +266,8 @@ with st.sidebar:
         st.warning("이 모델은 도구 호출을 지원하지 않아 코딩 에이전트로 쓸 수 없어요.")
     elif info and info.prompt_per_m is not None and info.completion_per_m is not None:
         st.caption(f"가격(100만 토큰당): 입력 ${info.prompt_per_m:.2f} · 출력 ${info.completion_per_m:.2f}")
+    if model_catalog.is_expensive(info):
+        st.warning("비싼 모델이에요. 한도를 빨리 쓸 수 있으니 필요할 때만 쓰세요.")
     if info and info.supports_images is not None:
         st.caption("🖼️ 이미지 입력 가능" if info.supports_images else "🖼️ 이미지는 볼 수 없는 모델 (텍스트/코드 파일은 가능)")
 
@@ -269,7 +291,9 @@ if ready:
     signature = (api_key, str(root.resolve()))
     if S.agent is None or S.agent_sig != signature:
         factory = S.get("llm_factory", OpenRouterClient)
-        S.agent = Agent(llm=factory(api_key), model=model, root=root, tracker=CostTracker())
+        S.agent = Agent(
+            llm=factory(api_key), model=model, root=root, tracker=CostTracker(), instructions=load_instructions()
+        )
         S.agent_sig = signature
         S.pending = None
         S.run_requested = False

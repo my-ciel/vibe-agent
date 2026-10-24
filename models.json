@@ -1,10 +1,29 @@
 {
-  "_note": "강사용: 수강생에게 보여줄 모델 목록입니다. 첫 번째가 기본 모델이에요. id는 OpenRouter 모델 페이지의 ID와 정확히 같아야 합니다. 앱 사이드바에서 가격/도구·이미지 지원 여부가 자동 검증됩니다.",
+  "_note": "강사용: 수강생에게 보여줄 모델 목록입니다. 첫 번째가 기본 모델이에요. id는 OpenRouter 모델 페이지의 ID와 정확히 같아야 합니다. 앱 사이드바에서 가격/도구·이미지 지원 여부가 자동 검증되고, '전체 모델에서 찾기'로 이 목록에 없는 모델도 고를 수 있어요.",
   "models": [
-    {"id": "anthropic/claude-haiku-5.5", "label": "Claude Haiku 5.5 (추천: 품질·가격 균형)"},
-    {"id": "deepseek/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash (빠르고 저렴)"},
-    {"id": "openai/gpt-5.6-luna", "label": "GPT-5.6 Luna"},
-    {"id": "z-ai/glm-5.3-flash", "label": "GLM 5.3 Flash"},
-    {"id": "anthropic/claude-sonnet-5.5", "label": "Claude Sonnet 5.5 (고품질, 약 20배 비쌈)"}
+    {
+      "id": "anthropic/claude-haiku-5.5",
+      "label": "💛 Haiku 5.5 · 추천"
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "label": "💚 Qwen 3.7 Flash · 최저가"
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "label": "💚 GLM 5.3 Flash · 저렴"
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "label": "💚 DeepSeek V4.1 · 저렴"
+    },
+    {
+      "id": "openai/gpt-5.6-luna",
+      "label": "💛 GPT-5.6 Luna · 균형"
+    },
+    {
+      "id": "anthropic/claude-sonnet-5.5",
+      "label": "🔴 Sonnet 5.5 · 고품질(비쌈)"
+    }
   ]
 }
