@@ -164,3 +164,59 @@ def test_read_file_hints_attachments_folder(ctx):
     (ctx.root / "attachments" / "sales.csv").write_text("a")
     with pytest.raises(ToolError, match="attachments/sales.csv"):
         run(ctx, "read_file", path="sales.csv")
+
+
+# ---- 덮어쓰기 충돌 방지 (ToolContext에 read_state가 있을 때만 작동) ----
+
+import time as _time
+
+
+@pytest.fixture
+def sctx(tmp_path):
+    return ToolContext(tmp_path.resolve(), None, {})
+
+
+def _touch_later(path, text):
+    _time.sleep(0.02)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_overwriting_unread_existing_file_is_blocked(sctx):
+    (sctx.root / "a.txt").write_text("기존")
+    with pytest.raises(ToolError, match="아직 읽지 않았어요"):
+        TOOLS["write_file"].run(sctx, {"path": "a.txt", "content": "덮어씀"})
+    run(sctx, "read_file", path="a.txt")
+    TOOLS["write_file"].run(sctx, {"path": "a.txt", "content": "덮어씀"})
+    assert (sctx.root / "a.txt").read_text() == "덮어씀"
+
+
+def test_file_changed_after_read_is_blocked_for_write_and_edit(sctx):
+    f = sctx.root / "a.txt"
+    f.write_text("원본")
+    run(sctx, "read_file", path="a.txt")
+    _touch_later(f, "다른 대화가 고침")
+    with pytest.raises(ToolError, match="바뀌었어요"):
+        TOOLS["write_file"].run(sctx, {"path": "a.txt", "content": "x"})
+    with pytest.raises(ToolError, match="바뀌었어요"):
+        TOOLS["edit_file"].run(sctx, {"path": "a.txt", "old_string": "고침", "new_string": "x"})
+    assert f.read_text() == "다른 대화가 고침"            # 아무것도 덮어쓰지 않았다
+    run(sctx, "read_file", path="a.txt")                    # 다시 읽으면 통과
+    TOOLS["edit_file"].run(sctx, {"path": "a.txt", "old_string": "고침", "new_string": "수정"})
+
+
+def test_files_the_agent_wrote_are_known_and_new_files_are_free(sctx):
+    TOOLS["write_file"].run(sctx, {"path": "new.txt", "content": "1"})        # 새 파일은 읽을 필요 없음
+    TOOLS["write_file"].run(sctx, {"path": "new.txt", "content": "2"})        # 자기가 쓴 파일은 다시 써도 됨
+    TOOLS["edit_file"].run(sctx, {"path": "new.txt", "old_string": "2", "new_string": "3"})
+    assert (sctx.root / "new.txt").read_text() == "3"
+
+
+def test_edit_of_unread_file_is_allowed_when_text_matches(sctx):
+    (sctx.root / "a.txt").write_text("hello")
+    TOOLS["edit_file"].run(sctx, {"path": "a.txt", "old_string": "hello", "new_string": "bye"})
+
+
+def test_preview_also_reports_conflict_before_approval(sctx):
+    (sctx.root / "a.txt").write_text("기존")
+    with pytest.raises(ToolError, match="아직 읽지 않았어요"):
+        TOOLS["write_file"].preview(sctx, {"path": "a.txt", "content": "x"})

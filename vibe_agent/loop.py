@@ -106,6 +106,7 @@ class Agent:
     decisions: dict[str, bool] = field(default_factory=dict)
     previews: dict[str, str] = field(default_factory=dict)  # call_id -> 승인 때 보여준 미리보기
     processes: ProcessManager = field(default_factory=ProcessManager)
+    read_state: dict[str, list[int]] = field(default_factory=dict)  # 파일별로 마지막에 읽거나 쓴 시점의 상태
     steps: int = 0
 
     def __post_init__(self) -> None:
@@ -227,7 +228,7 @@ class Agent:
                     return True
 
             yield ToolStart(call, args)
-            output = tool.run(ToolContext(self.root, self.processes), args)
+            output = tool.run(ToolContext(self.root, self.processes, self.read_state), args)
             ok = True
         except ToolError as exc:
             output, ok = f"오류: {exc}", False
@@ -271,6 +272,10 @@ class Agent:
                     if c["id"] not in answered
                 ]
         return []
+
+    def has_pending_calls(self) -> bool:
+        """결과가 아직 없는 도구 호출이 있는가 (저장된 대화를 불러온 뒤 이어서 처리해야 하는지 판단)."""
+        return bool(self._pending_calls())
 
     def _finished(self) -> bool:
         last = self.messages[-1]

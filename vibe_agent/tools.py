@@ -40,6 +40,9 @@ _ENCODINGS = ("utf-8", "cp949")  # 한국어 윈도우의 기존 파일도 읽�
 class ToolContext:
     root: Path
     processes: Any = None  # ProcessManager (백그라운드 실행 도구용)
+    # 상대경로 -> [mtime_ns, size]: 에이전트가 마지막으로 읽거나 쓴 시점의 파일 상태.
+    # 다른 대화나 직접 수정으로 파일이 바뀐 것을 모르고 덮어쓰는 일을 막는다. None이면 검사하지 않는다.
+    read_state: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +158,36 @@ def _diff(rel: str, old: str, new: str) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- 파일 상태 추적 (덮어쓰기 충돌 방지)
+
+
+def _file_sig(path: Path) -> list[int]:
+    stat = path.stat()
+    return [stat.st_mtime_ns, stat.st_size]
+
+
+def _remember(ctx: ToolContext, path: Path) -> None:
+    if ctx.read_state is not None and path.is_file():
+        ctx.read_state[relative_display(ctx.root, path)] = _file_sig(path)
+
+
+def _check_fresh(ctx: ToolContext, path: Path, must_have_read: bool) -> None:
+    """이미 있는 파일을 덮어쓰기 전에, 마지막으로 읽은 뒤 바뀌지 않았는지 확인한다."""
+    if ctx.read_state is None or not path.is_file():
+        return
+    rel = relative_display(ctx.root, path)
+    known = ctx.read_state.get(rel)
+    if known is None:
+        if must_have_read:
+            raise ToolError(f"{rel}은(는) 이미 있는 파일인데 아직 읽지 않았어요. 덮어쓰기 전에 read_file로 먼저 내용을 확인하세요.")
+        return
+    if known != _file_sig(path):
+        raise ToolError(
+            f"{rel}이(가) 마지막으로 읽은 뒤에 바뀌었어요 (다른 대화나 직접 수정). "
+            "read_file로 다시 읽고, 바뀐 내용을 반영해서 수정하세요."
+        )
+
+
 # ---------------------------------------------------------------- 읽기 도구
 
 
@@ -211,6 +244,7 @@ def _read_file(ctx: ToolContext, args: dict) -> str:
     limit = _int_arg(args, "limit", DEFAULT_READ_LINES, 1, MAX_READ_LINES)
 
     lines = load_doc(path).text.split("\n")
+    _remember(ctx, path)
     if lines and lines[-1] == "":
         lines.pop()
     total = len(lines)
@@ -281,6 +315,7 @@ def _plan_write(ctx: ToolContext, args: dict) -> tuple[Path, TextDoc, str, str]:
     content = _str_arg(args, "content")
     if len(content) > MAX_WRITE_CHARS:
         raise ToolError("내용이 너무 큽니다. 여러 파일로 나누세요.")
+    _check_fresh(ctx, path, must_have_read=True)
     doc = load_doc(path) if path.exists() else TextDoc()
     return path, doc, doc.text, content.replace("\r\n", "\n")
 
@@ -303,6 +338,7 @@ def _write_file(ctx: ToolContext, args: dict) -> str:
     path, doc, _, new = _plan_write(ctx, args)
     existed = path.exists()
     _write_doc(path, doc, new)
+    _remember(ctx, path)
     return f"{'수정' if existed else '생성'} 완료: {relative_display(ctx.root, path)}"
 
 
@@ -317,6 +353,7 @@ def _plan_edit(ctx: ToolContext, args: dict) -> tuple[Path, TextDoc, str, str]:
         raise ToolError("old_string이 비어 있습니다.")
     if old == new:
         raise ToolError("old_string과 new_string이 같습니다.")
+    _check_fresh(ctx, path, must_have_read=False)  # 정확히 일치하는 글자가 있어야 하므로 읽지 않았어도 허용
     doc = load_doc(path)
     count = doc.text.count(old)
     if count == 0:
@@ -337,6 +374,7 @@ def _preview_edit(ctx: ToolContext, args: dict) -> str:
 def _edit_file(ctx: ToolContext, args: dict) -> str:
     path, doc, _, updated = _plan_edit(ctx, args)
     _write_doc(path, doc, updated)
+    _remember(ctx, path)
     return f"수정 완료: {relative_display(ctx.root, path)}"
 
 

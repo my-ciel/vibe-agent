@@ -4,11 +4,13 @@
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import streamlit as st
 
 from vibe_agent import models as model_catalog
+from vibe_agent import sessions
 from vibe_agent.attachments import ALLOWED_EXTS, AttachmentView, Upload, prepare_message
 from vibe_agent.cost import CostTracker
 from vibe_agent.instructions import load_instructions
@@ -47,7 +49,12 @@ def _init_state() -> None:
     choices = model_catalog.load_model_choices()
     ids = [m["id"] for m in choices]
     S.setdefault("agent", None)
-    S.setdefault("agent_sig", None)
+    S.setdefault("agent_root", None)  # 현재 대화가 속한 폴더
+    S.setdefault("agent_key", None)
+    S.setdefault("session_id", None)
+    S.setdefault("session_created", 0.0)
+    S.setdefault("saved_sig", None)
+    S.setdefault("last_save", 0.0)
     S.setdefault("pending", None)  # 승인 대기 중인 ApprovalRequest
     S.setdefault("run_requested", False)
     S.setdefault("key_info", None)
@@ -67,11 +74,73 @@ def on_pick_folder() -> None:
         S.notice = "폴더 선택창을 열 수 없거나 취소되었습니다. 경로를 직접 입력해 주세요."
 
 
-def close_agent() -> None:
-    """현재 대화가 띄운 백그라운드 프로세스를 정리하고 에이전트를 버린다."""
-    if S.get("agent") is not None:
-        S.agent.close()
-    S.agent = None
+@st.cache_resource
+def _process_manager() -> ProcessManager:
+    """앱 전체가 공유하는 백그라운드 프로세스 관리자 (새로고침이나 대화 전환에도 서버가 유지된다)."""
+    manager = ProcessManager()
+    manager.cleanup_stale()  # 이전 실행이 비정상 종료되어 남긴 프로세스 정리
+    return manager
+
+
+def autosave(force: bool = False) -> None:
+    """현재 대화를 저장한다. 바뀐 게 없으면 건너뛰고, 실행 중에는 5초에 한 번만 저장한다."""
+    agent = S.get("agent")
+    if agent is None or not S.get("save_sessions", True):
+        return
+    sig = (len(agent.messages), len(agent.decisions), round(agent.tracker.cost_usd, 6))
+    now = time.monotonic()
+    if sig == S.saved_sig or (not force and now - S.last_save < 5):
+        return
+    if sessions.save(agent, S.session_id, S.session_created):
+        S.saved_sig, S.last_save = sig, now
+
+
+def open_session(root: Path, session_id: str | None = None, new: bool = False) -> None:
+    """폴더의 대화를 연다. 지정한 대화, 없으면 가장 최근 대화, new=True면 빈 새 대화."""
+    factory = S.get("llm_factory", OpenRouterClient)
+    api_key = S.get("api_key", "").strip()
+    agent = Agent(
+        llm=factory(api_key), model="", root=root, tracker=CostTracker(),
+        instructions=load_instructions(), processes=_process_manager(),
+    )
+    if not new and session_id is None:
+        known = sessions.list_sessions(agent.root)
+        session_id = known[0].id if known else None
+    created = time.time()
+    data = sessions.load(agent.root, session_id) if session_id else None
+    if data:
+        sessions.restore(agent, data)
+        created = float(data.get("created", created))
+    else:
+        session_id = sessions.new_session_id()
+    S.agent, S.session_id, S.session_created = agent, session_id, created
+    S.agent_root, S.agent_key = str(agent.root), api_key
+    S.pending, S.saved_sig = None, None
+    # 승인을 기다리던 도구 호출이 있었다면 이어서 처리해 승인 카드를 다시 보여준다
+    S.run_requested = agent.has_pending_calls()
+
+
+def on_switch_session(session_id: str) -> None:
+    autosave(force=True)
+    open_session(S.agent.root, session_id)
+
+
+def on_new_chat() -> None:
+    autosave(force=True)
+    open_session(S.agent.root, new=True)
+
+
+def on_delete_session(session_id: str) -> None:
+    root = S.agent.root
+    sessions.delete(root, session_id)
+    if session_id == S.session_id:
+        open_session(root, new=True)
+
+
+def on_delete_all_sessions() -> None:
+    root = S.agent.root
+    sessions.delete_all(root)
+    open_session(root, new=True)
 
 
 def on_stop_process(proc_id: str) -> None:
@@ -80,14 +149,6 @@ def on_stop_process(proc_id: str) -> None:
             S.agent.processes.stop(proc_id)
         except Exception:
             pass
-
-
-def on_new_chat() -> None:
-    close_agent()
-    S.agent = None
-    S.agent_sig = None
-    S.pending = None
-    S.run_requested = False
 
 
 def on_check_key() -> None:
@@ -102,6 +163,7 @@ def on_decide(call_id: str, approved: bool) -> None:
     S.agent.decide(call_id, approved)
     S.pending = None
     S.run_requested = True
+    autosave(force=True)
 
 
 # ------------------------------------------------------------------ 그리기
@@ -162,7 +224,7 @@ def render_approval(request: ApprovalRequest) -> None:
 
 def render_processes(placeholder, agent: Agent | None) -> None:
     """실행 중인 백그라운드 프로세스(접속 링크, 중지 버튼)."""
-    running = agent.processes.running() if agent else []
+    running = [p for p in agent.processes.running() if p.cwd == str(agent.root)] if agent else []
     with placeholder.container():
         if not running:
             return
@@ -173,6 +235,47 @@ def render_processes(placeholder, agent: Agent | None) -> None:
             for url in proc.urls()[:2]:
                 st.link_button(f"🔗 {url}", url)
             st.button("⏹️ 중지", key=f"stop-{proc.id}", on_click=on_stop_process, args=(proc.id,))
+
+
+def _ago(timestamp: float) -> str:
+    seconds = max(time.time() - timestamp, 0)
+    if seconds < 60:
+        return "방금"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}분 전"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}시간 전"
+    return f"{int(seconds // 86400)}일 전"
+
+
+def render_sessions(placeholder, agent: Agent | None) -> None:
+    """이 폴더의 저장된 대화 목록 (전환, 삭제, 새 대화)."""
+    if agent is None:
+        placeholder.empty()
+        return
+    infos = sessions.list_sessions(agent.root)
+    with placeholder.container():
+        st.divider()
+        st.caption("💬 이 폴더의 대화")
+        st.button("➕ 새 대화", key="new-chat", on_click=on_new_chat, use_container_width=True)
+        if not any(i.id == S.session_id for i in infos):
+            st.caption("● 지금 대화 (아직 저장 전)")
+        for info in infos[:15]:
+            current = info.id == S.session_id
+            left, right = st.columns([5, 1])
+            left.button(
+                ("● " if current else "") + info.title, key=f"sess-{info.id}", on_click=on_switch_session,
+                args=(info.id,), disabled=current, use_container_width=True,
+                help=f"{_ago(info.updated)} · 메시지 {info.messages}개 · ${info.cost:.3f}",
+            )
+            right.button("🗑", key=f"del-{info.id}", on_click=on_delete_session, args=(info.id,), help="이 대화 삭제")
+        if len(infos) > 15:
+            st.caption(f"오래된 대화 {len(infos) - 15}개는 목록에 표시하지 않아요")
+        with st.expander("대화 저장 설정"):
+            st.toggle("💾 대화 기록 저장", value=True, key="save_sessions", help="끄면 이 컴퓨터에 대화를 남기지 않아요 (공용 PC용)")
+            st.caption("저장 위치: 내 계정의 `.vibe-agent/sessions` 폴더. API 키는 저장하지 않아요. 대화에는 코드와 파일 내용이 들어 있어요.")
+            if infos:
+                st.button("이 폴더의 대화 모두 삭제", key="del-all", on_click=on_delete_all_sessions)
 
 
 def render_welcome() -> None:
@@ -216,6 +319,7 @@ def drive(agent: Agent, cost_placeholder, limit: float) -> None:
                     tool_phs[event.call.id] = st.empty()
                     tool_phs[event.call.id].caption(tool_title(entry) + " 실행 중…")
                 elif isinstance(event, ToolResult):
+                    autosave()
                     entry = ToolEntry(event.call.id, event.call.name, event.args, event.output)
                     preview = agent.previews.get(event.call.id)
                     target = tool_phs[event.call.id].container() if event.call.id in tool_phs else st.container()
@@ -237,16 +341,12 @@ def drive(agent: Agent, cost_placeholder, limit: float) -> None:
     except Exception as exc:  # 화면이 깨지지 않게 안내하고, 대화 기록은 유지한다
         S.run_requested = False
         st.error(f"앱 내부 오류가 발생했어요: {type(exc).__name__}: {exc}")
+    autosave(force=True)
 
 
 # ------------------------------------------------------------------ 메인
 
-@st.cache_resource
-def _cleanup_leftover_processes() -> int:
-    return ProcessManager().cleanup_stale()
-
-
-_cleanup_leftover_processes()
+_process_manager()
 _init_state()
 choices = model_catalog.load_model_choices()
 labels = {m["id"]: m.get("label", m["id"]) for m in choices}
@@ -271,6 +371,7 @@ with st.sidebar:
     if S.notice:
         st.info(S.notice)
         S.notice = None
+    session_placeholder = st.empty()  # 이 폴더의 대화 목록 (에이전트가 준비된 뒤에 채운다)
 
     st.divider()
     catalog = model_catalog.fetch_catalog()
@@ -319,8 +420,7 @@ with st.sidebar:
     max_steps = st.number_input("요청당 최대 단계", min_value=3, max_value=60, value=20, step=1)
 
     st.divider()
-    st.button("🗑️ 새 대화", on_click=on_new_chat)
-    st.caption("키나 폴더를 바꾸면 새 대화가 시작돼요.")
+    st.caption("키를 바꿔도 대화는 이어져요. 폴더를 바꾸면 그 폴더의 대화로 전환돼요.")
 
 api_key = S.get("api_key", "").strip()
 root_text = S.root_text.strip().strip('"')
@@ -331,17 +431,14 @@ ready = bool(api_key and model and root and root.is_dir())
 
 agent: Agent | None = None
 if ready:
-    signature = (api_key, str(root.resolve()))
-    if S.agent is None or S.agent_sig != signature:
-        close_agent()
-        factory = S.get("llm_factory", OpenRouterClient)
-        S.agent = Agent(
-            llm=factory(api_key), model=model, root=root, tracker=CostTracker(), instructions=load_instructions()
-        )
-        S.agent_sig = signature
-        S.pending = None
-        S.run_requested = False
-        save_settings({"last_root": str(root.resolve()), "last_model": model})
+    root_key = str(root.resolve())
+    if S.agent is None or S.agent_root != root_key:
+        autosave(force=True)  # 폴더를 바꾸면 이전 대화를 먼저 저장한다
+        open_session(root)
+        save_settings({"last_root": root_key, "last_model": model})
+    elif api_key != S.agent_key:  # 키만 바뀌었으면 대화는 그대로 두고 연결만 바꾼다
+        S.agent.llm = S.get("llm_factory", OpenRouterClient)(api_key)
+        S.agent_key = api_key
     agent = S.agent
     agent.model = model
     agent.max_steps = int(max_steps)
@@ -351,6 +448,7 @@ render_cost(cost_placeholder, agent, limit)
 
 if agent is None:
     render_processes(process_placeholder, None)
+    render_sessions(session_placeholder, None)
     render_welcome()
     st.chat_input("먼저 왼쪽에서 키와 작업 폴더를 설정해 주세요", disabled=True)
     st.stop()
@@ -392,4 +490,6 @@ if S.run_requested:
         st.rerun()  # 입력창을 잠그고 승인 카드를 기록 아래에 정상 위치로 다시 그린다
 if S.pending is not None:
     render_approval(S.pending)
+autosave(force=True)
 render_processes(process_placeholder, agent)
+render_sessions(session_placeholder, agent)
