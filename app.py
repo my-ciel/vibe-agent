@@ -10,7 +10,7 @@ from pathlib import Path
 import streamlit as st
 
 from vibe_agent import models as model_catalog
-from vibe_agent import sessions
+from vibe_agent import errorlog, sessions
 from vibe_agent.attachments import ALLOWED_EXTS, AttachmentView, Upload, prepare_message
 from vibe_agent.cost import CostTracker
 from vibe_agent.instructions import load_instructions
@@ -55,6 +55,7 @@ def _init_state() -> None:
     S.setdefault("session_created", 0.0)
     S.setdefault("saved_sig", None)
     S.setdefault("last_save", 0.0)
+    S.setdefault("save_failed", False)
     S.setdefault("pending", None)  # 승인 대기 중인 ApprovalRequest
     S.setdefault("run_requested", False)
     S.setdefault("key_info", None)
@@ -92,7 +93,9 @@ def autosave(force: bool = False) -> None:
     if sig == S.saved_sig or (not force and now - S.last_save < 5):
         return
     if sessions.save(agent, S.session_id, S.session_created):
-        S.saved_sig, S.last_save = sig, now
+        S.saved_sig, S.last_save, S.save_failed = sig, now, False
+    else:
+        S.save_failed = True
 
 
 def open_session(root: Path, session_id: str | None = None, new: bool = False) -> None:
@@ -109,10 +112,23 @@ def open_session(root: Path, session_id: str | None = None, new: bool = False) -
     created = time.time()
     data = sessions.load(agent.root, session_id) if session_id else None
     if data:
-        sessions.restore(agent, data)
-        created = float(data.get("created", created))
-    else:
+        try:
+            sessions.restore(agent, data)
+            build_turns(agent.messages[1:])  # 화면에 그릴 수 있는 형태인지 미리 확인한다
+            created = float(data.get("created", created))
+        except Exception as exc:  # 손상된 저장 파일 때문에 앱이 멈추지 않게 새 대화로 시작한다
+            errorlog.log_exception(f"저장된 대화 복원 실패 ({session_id})", exc)
+            S.notice = "저장된 대화를 불러오지 못해서 새 대화로 시작했어요."
+            agent = Agent(
+                llm=factory(api_key), model="", root=root, tracker=CostTracker(),
+                instructions=load_instructions(), processes=_process_manager(),
+            )
+            data, session_id = None, sessions.new_session_id()
+    elif session_id:
+        S.notice = "저장된 대화 파일이 손상되어 열 수 없어요. 새 대화로 시작했어요."
         session_id = sessions.new_session_id()
+    if not data:
+        session_id = session_id or sessions.new_session_id()
     S.agent, S.session_id, S.session_created = agent, session_id, created
     S.agent_root, S.agent_key = str(agent.root), api_key
     S.pending, S.saved_sig = None, None
@@ -147,8 +163,9 @@ def on_stop_process(proc_id: str) -> None:
     if S.get("agent") is not None:
         try:
             S.agent.processes.stop(proc_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            errorlog.log_exception(f"프로그램 중지 실패 ({proc_id})", exc)
+            S.notice = f"프로그램을 중지하지 못했어요: {exc}"
 
 
 def on_check_key() -> None:
@@ -170,7 +187,7 @@ def on_decide(call_id: str, approved: bool) -> None:
 
 
 def render_tool(entry: ToolEntry, preview: str | None) -> None:
-    with st.expander(tool_title(entry), expanded=False):
+    with st.expander(tool_title(entry), expanded=entry.status in ("error", "warn")):
         if entry.name in DIFF_TOOLS and preview:
             st.code(preview, language="diff")
         elif entry.name in ("run_command", "start_process"):
@@ -258,6 +275,8 @@ def render_sessions(placeholder, agent: Agent | None) -> None:
         st.divider()
         st.caption("💬 이 폴더의 대화")
         st.button("➕ 새 대화", key="new-chat", on_click=on_new_chat, use_container_width=True)
+        if S.get("save_failed"):
+            st.warning("⚠️ 대화를 저장하지 못했어요. 디스크 공간이나 폴더 권한을 확인해 주세요. 지금 대화는 이 창에서만 유지돼요.")
         if not any(i.id == S.session_id for i in infos):
             st.caption("● 지금 대화 (아직 저장 전)")
         for info in infos[:15]:
@@ -340,7 +359,11 @@ def drive(agent: Agent, cost_placeholder, limit: float) -> None:
         S.run_requested = False
     except Exception as exc:  # 화면이 깨지지 않게 안내하고, 대화 기록은 유지한다
         S.run_requested = False
+        details = errorlog.log_exception("에이전트 실행 중 오류", exc)
         st.error(f"앱 내부 오류가 발생했어요: {type(exc).__name__}: {exc}")
+        with st.expander("오류 자세히 보기 (강사에게 보여 주세요)"):
+            st.code(details, language=None)
+            st.caption(f"오류 기록 파일: {errorlog.LOG_PATH}")
     autosave(force=True)
 
 
@@ -436,6 +459,9 @@ if ready:
         autosave(force=True)  # 폴더를 바꾸면 이전 대화를 먼저 저장한다
         open_session(root)
         save_settings({"last_root": root_key, "last_model": model})
+        if S.notice:
+            st.sidebar.info(S.notice)
+            S.notice = None
     elif api_key != S.agent_key:  # 키만 바뀌었으면 대화는 그대로 두고 연결만 바꾼다
         S.agent.llm = S.get("llm_factory", OpenRouterClient)(api_key)
         S.agent_key = api_key

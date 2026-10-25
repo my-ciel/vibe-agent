@@ -1,27 +1,11 @@
 from pathlib import Path
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
 from tests.fakes import ScriptedLLM, call
-from vibe_agent import models, sessions, settings
+from vibe_agent import models
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-
-
-@pytest.fixture(autouse=True)
-def isolate(monkeypatch, tmp_path):
-    import streamlit as st
-
-    from vibe_agent import processes
-
-    monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "settings" / "s.json")
-    monkeypatch.setattr(sessions, "SESSIONS_ROOT", tmp_path / "sessions")
-    monkeypatch.setattr(processes, "REGISTRY_PATH", tmp_path / "processes.json")
-    monkeypatch.setattr(models, "fetch_catalog", lambda *a, **k: {})
-    st.cache_resource.clear()  # 앱 전체가 공유하는 프로세스 관리자를 테스트마다 새로 만든다
-    yield
-    st.cache_resource.clear()
 
 
 def make_app(tmp_path, *turns):

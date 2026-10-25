@@ -33,7 +33,14 @@ class ToolEntry:
             return "pending"
         if self.output == DENIED_MESSAGE:
             return "denied"
-        return "error" if self.output.startswith("오류:") else "ok"
+        if self.output.startswith("오류:"):
+            return "error"
+        first = self.output.splitlines()[0] if self.output else ""
+        failed_command = self.name == "run_command" and (
+            first.startswith("[시간 초과") or (first.startswith("[종료 코드 ") and not first.startswith("[종료 코드 0]"))
+        )
+        failed_start = self.name == "start_process" and "종료됨 (종료 코드 " in first and "종료됨 (종료 코드 0)" not in first
+        return "warn" if failed_command or failed_start else "ok"
 
 
 @dataclass
@@ -67,7 +74,7 @@ def tool_title(entry: ToolEntry) -> str:
     detail = detail.replace("\n", " ")
     if len(detail) > 70:
         detail = detail[:67] + "..."
-    mark = {"ok": "✅", "error": "❌", "denied": "🚫", "pending": "⏳"}[entry.status]
+    mark = {"ok": "✅", "warn": "⚠️", "error": "❌", "denied": "🚫", "pending": "⏳"}[entry.status]
     return f"{mark} {icon} {label}" + (f" · {detail}" if detail else "")
 
 

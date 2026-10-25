@@ -118,6 +118,8 @@ def load(root: Path, session_id: str) -> dict | None:
         return None
     if not isinstance(data, dict) or data.get("version") != VERSION or not isinstance(data.get("messages"), list):
         return None
+    if not all(isinstance(m, dict) and m.get("role") in ("user", "assistant", "tool") for m in data["messages"]):
+        return None  # 손상된 대화는 불러오지 않는다
     return data
 
 
