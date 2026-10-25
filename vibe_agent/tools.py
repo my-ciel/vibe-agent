@@ -15,6 +15,7 @@ from .errors import SandboxError, ToolError
 from .sandbox import (
     IGNORED_DIRS,
     check_command,
+    check_venv_policy,
     check_writable,
     relative_display,
     resolve_in_root,
@@ -342,23 +343,25 @@ def _edit_file(ctx: ToolContext, args: dict) -> str:
 # ---------------------------------------------------------------- 명령 실행
 
 
+def _validate_command(ctx: ToolContext, command: str) -> None:
+    reason = check_command(command) or check_venv_policy(command, ctx.root)
+    if reason:
+        raise SandboxError(reason)
+
+
 def _command_timeout(args: dict) -> int:
     return _int_arg(args, "timeout", DEFAULT_COMMAND_TIMEOUT, 1, MAX_COMMAND_TIMEOUT)
 
 
 def _preview_command(ctx: ToolContext, args: dict) -> str:
     command = _str_arg(args, "command")
-    reason = check_command(command)
-    if reason:
-        raise SandboxError(reason)
+    _validate_command(ctx, command)
     return f"$ {command}\n(작업 폴더: {ctx.root}, 제한시간 {_command_timeout(args)}초)"
 
 
 def _run_command(ctx: ToolContext, args: dict) -> str:
     command = _str_arg(args, "command")
-    reason = check_command(command)
-    if reason:
-        raise SandboxError(reason)
+    _validate_command(ctx, command)
     result = pu.run_shell(command, str(ctx.root), timeout=_command_timeout(args))
     if result.timed_out:
         return f"[시간 초과로 중단됨]\n{result.output}"
@@ -390,17 +393,13 @@ def _process_report(proc: Any, logs: str, header: str = "") -> str:
 
 def _preview_start_process(ctx: ToolContext, args: dict) -> str:
     command = _str_arg(args, "command")
-    reason = check_command(command)
-    if reason:
-        raise SandboxError(reason)
+    _validate_command(ctx, command)
     return f"$ {command}\n(백그라운드로 계속 실행됩니다 · 작업 폴더: {ctx.root})"
 
 
 def _start_process(ctx: ToolContext, args: dict) -> str:
     command = _str_arg(args, "command")
-    reason = check_command(command)
-    if reason:
-        raise SandboxError(reason)
+    _validate_command(ctx, command)
     manager = _manager(ctx)
     wait = _int_arg(args, "startup_wait", 5, 0, 30)
     proc = manager.start(command, str(ctx.root), str(args.get("name") or ""))

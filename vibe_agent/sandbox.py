@@ -72,3 +72,20 @@ def check_command(command: str) -> str | None:
         if re.search(pattern, command, re.IGNORECASE):
             return reason
     return None
+
+
+# `pip install`, `python -m pip install`, `uv pip install`. 경로가 붙은 .venv/bin/pip 같은 명시적 호출은 해당하지 않는다.
+_PIP_INSTALL = re.compile(
+    r"(?:^|[\s;&|(])(?:(?:python3?|py)(?:\.exe)?\s+(?:-\S+\s+)*-m\s+pip\d*|(?<!-m )pip\d*(?:\.exe)?|uv\s+pip)\s+install\b",
+    re.IGNORECASE,
+)
+
+
+def check_venv_policy(command: str, root: Path) -> str | None:
+    """프로젝트에 .venv가 없으면 패키지 설치를 막는다 (전역 파이썬이 오염되는 것을 방지)."""
+    if _PIP_INSTALL.search(command) and not (root / ".venv").is_dir():
+        return (
+            "작업 폴더에 .venv 가상환경이 없어서 패키지 설치를 막았어요. 먼저 `python -m venv .venv` 로 "
+            "가상환경을 만든 뒤(별도 명령으로) 다시 설치하세요. 패키지를 전역에 설치하면 안 돼요."
+        )
+    return None
