@@ -14,6 +14,7 @@ from typing import Any, Iterator
 
 from .cost import CostTracker, Usage
 from .errors import ToolError
+from .history import repair_history
 from .llm import (
     Finished,
     LLMClient,
@@ -70,6 +71,11 @@ class UsageUpdate:
 
 
 @dataclass
+class Notice:
+    message: str
+
+
+@dataclass
 class ErrorEvent:
     message: str
 
@@ -80,7 +86,7 @@ class Done:
     message: str = ""
 
 
-Event = TextDelta | ToolStart | ApprovalRequest | ToolResult | UsageUpdate | ErrorEvent | Done
+Event = TextDelta | ToolStart | ApprovalRequest | ToolResult | UsageUpdate | Notice | ErrorEvent | Done
 
 
 # ---------------------------------------------------------------- 에이전트
@@ -158,9 +164,24 @@ class Agent:
                 return
 
     def _call_llm(self, schemas: list[dict]) -> Iterator[Event]:
+        """LLM을 호출한다. 400 거절이면 기록을 줄여서 한 번 더 시도한다 (아직 아무것도 화면에 내보내기 전일 때만)."""
+        emitted = False
+        for aggressive in (False, True):
+            try:
+                for event in self._stream_once(schemas, aggressive):
+                    emitted = emitted or isinstance(event, TextDelta)
+                    yield event
+                return
+            except LLMError as exc:
+                if aggressive or exc.status != 400 or emitted:
+                    raise
+                yield Notice("요청이 거절되어 오래된 내용을 줄여서 다시 시도해요...")
+
+    def _stream_once(self, schemas: list[dict], aggressive: bool) -> Iterator[Event]:
         text = ""
         calls: list[ToolCall] = []
-        for event in self.llm.stream(self.messages, schemas, self.model):
+        sent = repair_history(self.messages, aggressive)
+        for event in self.llm.stream(sent, schemas, self.model):
             if isinstance(event, TextChunk):
                 text += event.text
                 yield TextDelta(event.text)
@@ -171,14 +192,15 @@ class Agent:
                 yield UsageUpdate(event.usage, self.tracker)
             elif isinstance(event, Finished) and event.reason == "length":
                 yield ErrorEvent("모델의 응답 길이 제한에 걸려 답변이 중간에 끊겼습니다.")
+        if not text and not calls:
+            # 빈 응답은 기록에 남기지 않는다 (다음 요청이 거절되는 원인이 될 수 있다)
+            raise LLMError("모델이 빈 응답을 보냈어요. 같은 요청을 다시 보내거나 다른 모델로 바꿔 보세요.")
         message: dict[str, Any] = {"role": "assistant", "content": text or None}
         if calls:
             message["tool_calls"] = [
                 {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
                 for c in calls
             ]
-        elif not text:
-            message["content"] = ""
         self.messages.append(message)
 
     # -- 도구 호출 처리

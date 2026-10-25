@@ -11,12 +11,17 @@ from typing import Any, Iterable, Iterator, Protocol
 import openai
 
 from .cost import Usage
+from .history import safe_id
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class LLMError(Exception):
     """사용자에게 그대로 보여줄 수 있는 API 오류."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass
@@ -94,7 +99,7 @@ def parse_stream(chunks: Iterable[Any]) -> Iterator[StreamEvent]:
         yield ToolCallsReady(
             [
                 ToolCall(
-                    id=slot["id"] or f"call_{uuid.uuid4().hex[:12]}",
+                    id=safe_id(slot["id"]) if slot["id"] else f"call_{uuid.uuid4().hex[:12]}",
                     name=slot["name"],
                     arguments=slot["arguments"],
                 )
@@ -113,7 +118,15 @@ def _error_detail(exc: Exception) -> str:
         # openai SDK는 응답의 error 항목만 body로 주지만, 전체 본문이 오는 경우도 대비한다.
         error = body.get("error") if isinstance(body.get("error"), dict) else body
         if error.get("message"):
-            return str(error["message"])[:300]
+            message = str(error["message"])
+            # OpenRouter는 "Provider returned error"처럼 뭉뚱그린 메시지 뒤에 제공자의 원문 오류를 metadata에 담는다.
+            meta = error.get("metadata") if isinstance(error.get("metadata"), dict) else {}
+            extra = []
+            if meta.get("provider_name"):
+                extra.append(f"제공자: {meta['provider_name']}")
+            if meta.get("raw"):
+                extra.append(f"원문: {str(meta['raw'])[:200]}")
+            return (message + (f" [{' / '.join(extra)}]" if extra else ""))[:500]
     return str(getattr(exc, "message", None) or exc)[:300]
 
 
@@ -123,19 +136,22 @@ def translate_error(exc: Exception) -> LLMError:
         return LLMError("API 키가 올바르지 않거나 만료되었습니다. 키를 다시 확인해 주세요.")
     if isinstance(exc, openai.APIStatusError):
         status = exc.status_code
+        low = detail.lower()
         if status == 402:
-            return LLMError("크레딧이 부족하거나 키의 사용 한도에 도달했습니다. 강사에게 문의해 주세요.")
+            return LLMError("크레딧이 부족하거나 키의 사용 한도에 도달했습니다. 강사에게 문의해 주세요.", status=status)
         if status == 403:
-            return LLMError(f"이 키로는 요청할 수 없습니다 (권한/지역 제한 또는 모델 접근 불가): {detail}")
+            return LLMError(f"이 키로는 요청할 수 없습니다 (권한/지역 제한 또는 모델 접근 불가): {detail}", status=status)
         if status == 429:
-            return LLMError("요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.")
-        if status == 400 and "valid model" in detail.lower():
-            return LLMError(f"모델 ID가 올바르지 않습니다. 사이드바에서 모델을 다시 선택하거나 철자를 확인하세요. ({detail})")
-        if status == 404 or (status == 400 and "tool" in detail.lower()):
-            return LLMError(f"이 모델은 코딩 에이전트(도구 호출)를 지원하지 않거나 지금 이용할 수 없습니다. 다른 모델을 선택해 보세요. ({detail[:120]})")
+            return LLMError("요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.", status=status)
+        if status == 400 and "valid model" in low:
+            return LLMError(f"모델 ID가 올바르지 않습니다. 사이드바에서 모델을 다시 선택하거나 철자를 확인하세요. ({detail})", status=status)
+        # 도구 호출 미지원은 OpenRouter의 구체적인 문구로만 판단한다 ("tool"이라는 단어만으로는 다른 오류와 구분되지 않는다)
+        if status == 404 or "support tool" in low or "tool use" in low:
+            return LLMError(f"이 모델은 코딩 에이전트(도구 호출)를 지원하지 않거나 지금 이용할 수 없습니다. 다른 모델을 선택해 보세요. ({detail[:120]})", status=status)
         if status >= 500:
-            return LLMError(f"OpenRouter/모델 제공자 서버 오류입니다. 잠시 후 다시 시도하세요. ({status})")
-        return LLMError(f"요청이 거절되었습니다 ({status}): {detail}")
+            return LLMError(f"OpenRouter/모델 제공자 서버 오류입니다. 잠시 후 다시 시도하세요. ({status})", status=status)
+        hint = " 모델을 바꿔서 다시 보내거나, 계속되면 '새 대화'로 다시 시작해 보세요." if status == 400 else ""
+        return LLMError(f"요청이 거절되었습니다 ({status}): {detail}{hint}", status=status)
     if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
         return LLMError("OpenRouter에 연결할 수 없습니다. 인터넷 연결을 확인해 주세요.")
     return LLMError(f"예상하지 못한 오류: {type(exc).__name__}: {detail}")

@@ -21,6 +21,7 @@ from vibe_agent.loop import (
     ApprovalRequest,
     Done,
     ErrorEvent,
+    Notice,
     TextDelta,
     ToolResult,
     ToolStart,
@@ -224,6 +225,8 @@ def drive(agent: Agent, cost_placeholder, limit: float) -> None:
                     S.pending = event
                 elif isinstance(event, UsageUpdate):
                     render_cost(cost_placeholder, agent, limit)
+                elif isinstance(event, Notice):
+                    st.caption("ℹ️ " + event.message)
                 elif isinstance(event, ErrorEvent):
                     st.error(event.message)
                 elif isinstance(event, Done) and event.message:
