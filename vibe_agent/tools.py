@@ -401,14 +401,31 @@ def _start_process(ctx: ToolContext, args: dict) -> str:
     command = _str_arg(args, "command")
     _validate_command(ctx, command)
     manager = _manager(ctx)
-    wait = _int_arg(args, "startup_wait", 5, 0, 30)
-    proc = manager.start(command, str(ctx.root), str(args.get("name") or ""))
+    wait = _int_arg(args, "startup_wait", 8, 0, 30)
+    cwd = str(ctx.root)
+    existing = manager.find_running(command, cwd)
+    if existing:  # 같은 서버를 두 번 띄우면 윈도우에서는 같은 포트에 둘 다 열릴 수 있어 막는다
+        return _process_report(existing, existing.read_new(), "이미 실행 중이라 새로 시작하지 않았어요 · ")
+    proc = manager.start(command, cwd, str(args.get("name") or ""))
     deadline = time.monotonic() + wait
+    last_len, quiet_since = 0, time.monotonic()
     while time.monotonic() < deadline and proc.running and not proc.urls():
         time.sleep(0.2)
+        size = len(proc.full_text())
+        if size != last_len:
+            last_len, quiet_since = size, time.monotonic()
+        elif size and time.monotonic() - quiet_since > 1.5:
+            break  # 로그가 나온 뒤 잠잠해졌으면 시작이 끝난 것으로 본다
     if proc.urls():
         time.sleep(0.3)  # 주소와 함께 나오는 나머지 로그를 조금 더 모은다
-    return _process_report(proc, proc.read_new(), "시작함 · ")
+    logs = proc.read_new()
+    report = _process_report(proc, logs, "시작함 · ")
+    if proc.running and not logs.strip():
+        report += (
+            f"\n(아직 로그가 없어요. 느린 PC에서는 시작이 오래 걸릴 수 있어요. 같은 명령을 다시 실행하지 말고 "
+            f"read_process_output(id=\"{proc.id}\", wait_seconds=10)으로 확인하세요.)"
+        )
+    return report
 
 
 def _read_process_output(ctx: ToolContext, args: dict) -> str:
@@ -536,7 +553,7 @@ def build_tools() -> dict[str, Tool]:
                 "properties": {
                     "command": {"type": "string"},
                     "name": {"type": "string", "description": "Short label, e.g. 'web server'."},
-                    "startup_wait": {"type": "integer", "description": "Seconds to wait for startup logs/URL (max 30). Default 5."},
+                    "startup_wait": {"type": "integer", "description": "Seconds to wait for startup logs/URL (max 30). Default 8."},
                 },
                 "required": ["command"],
             },

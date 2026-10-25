@@ -65,6 +65,7 @@ class ManagedProcess:
     name: str
     command: str
     popen: subprocess.Popen
+    cwd: str = ""
     started: float = field(default_factory=time.time)
     _text: str = ""
     _base: int = 0  # 버퍼 앞부분이 잘려 나간 글자 수
@@ -133,6 +134,14 @@ class ProcessManager:
 
     # -- 실행/종료
 
+    def find_running(self, command: str, cwd: str) -> ManagedProcess | None:
+        """같은 명령(같은 폴더)으로 이미 실행 중인 프로세스."""
+        norm = " ".join(command.split())
+        for proc in self.running():
+            if " ".join(proc.command.split()) == norm and proc.cwd == cwd:
+                return proc
+        return None
+
     def start(self, command: str, cwd: str, name: str = "") -> ManagedProcess:
         if len(self.running()) >= MAX_PROCESSES:
             raise ToolError(f"동시에 실행할 수 있는 프로세스는 {MAX_PROCESSES}개까지예요. 먼저 stop_process로 정리하세요.")
@@ -147,7 +156,7 @@ class ProcessManager:
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **extra,
         )
         self._counter += 1
-        proc = ManagedProcess(f"p{self._counter}", name.strip() or command.split()[0], command, popen)
+        proc = ManagedProcess(f"p{self._counter}", name.strip() or command.split()[0], command, popen, cwd=cwd)
         threading.Thread(target=proc._pump, daemon=True).start()
         self._procs[proc.id] = proc
         self._save_registry()

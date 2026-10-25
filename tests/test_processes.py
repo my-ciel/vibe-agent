@@ -78,10 +78,10 @@ def test_read_waits_for_new_output(ctx, mgr):
 
 
 def test_process_limit(ctx):
-    for _ in range(3):
-        run(ctx, "start_process", command=f"{PY} -c \"import time; time.sleep(60)\"", startup_wait=0)
+    for i in range(3):
+        run(ctx, "start_process", command=f"{PY} -c \"import time; time.sleep({60 + i})\"", startup_wait=0)
     with pytest.raises(ToolError, match="3개까지"):
-        run(ctx, "start_process", command=f"{PY} -c \"import time; time.sleep(60)\"", startup_wait=0)
+        run(ctx, "start_process", command=f"{PY} -c \"import time; time.sleep(99)\"", startup_wait=0)
 
 
 def test_unknown_id_and_blocked_command(ctx):
@@ -174,3 +174,34 @@ def test_agent_flow_requires_approval_and_close_stops_processes(tmp_path):
     agent.close()
     time.sleep(0.5)
     assert not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+
+
+def test_same_command_is_not_started_twice(ctx, mgr):
+    cmd = f"{PY} -c \"import time; print('up', flush=True); time.sleep(60)\""
+    first = run(ctx, "start_process", command=cmd, startup_wait=10)
+    second = run(ctx, "start_process", command="  " + cmd.replace(" -c ", "   -c ") + " ", startup_wait=10)  # 공백만 다른 같은 명령
+    assert "시작함" in first and "이미 실행 중" in second
+    assert len(mgr.running()) == 1 and len(mgr.all()) == 1
+
+
+def test_different_command_still_starts(ctx, mgr):
+    run(ctx, "start_process", command=f"{PY} -c \"import time; time.sleep(60)\"", startup_wait=0)
+    run(ctx, "start_process", command=f"{PY} -c \"import time; time.sleep(61)\"", startup_wait=0)
+    assert len(mgr.running()) == 2
+
+
+def test_no_log_yet_tells_model_not_to_restart(ctx):
+    out = run(ctx, "start_process", command=f"{PY} -c \"import time; time.sleep(60)\"", startup_wait=1)
+    assert "같은 명령을 다시 실행하지 말고" in out and "read_process_output" in out
+
+
+def test_returns_early_once_logs_go_quiet(ctx):
+    started = time.monotonic()
+    out = run(ctx, "start_process", command=f"{PY} -c \"import time; print('ready', flush=True); time.sleep(60)\"", startup_wait=30)
+    assert "ready" in out and time.monotonic() - started < 12
+
+
+def test_prompt_warns_against_double_start(tmp_path):
+    from vibe_agent.prompts import build_system_prompt
+
+    assert "Never start the same command twice" in build_system_prompt(tmp_path)
