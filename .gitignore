@@ -3,3 +3,10 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .env
+
+# 강사용 도구가 만드는 파일 (수강생 API 키가 들어 있음 - 커밋 금지)
+keys*.csv
+names.txt
+
+# 실행 중 생기는 파일
+*.log

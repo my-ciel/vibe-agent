@@ -1,9 +1,7 @@
-import pytest
-
 from tests.fakes import ScriptedLLM, call
 from vibe_agent.cost import CostTracker, Usage
 from vibe_agent.llm import LLMError
-from vibe_agent.loop import Agent, ApprovalRequest, Done, ErrorEvent, TextDelta, ToolResult, UsageUpdate
+from vibe_agent.loop import Agent, ApprovalRequest, Done, ErrorEvent, TextDelta, ToolResult
 
 
 def make(tmp_path, *turns, **kw):

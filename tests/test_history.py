@@ -3,10 +3,9 @@ import json
 import httpx
 import openai
 
-from tests.fakes import ScriptedLLM, call
 from vibe_agent.cost import Usage
 from vibe_agent.history import repair_history, safe_id
-from vibe_agent.llm import Finished, LLMError, TextChunk, ToolCallsReady, UsageInfo, translate_error
+from vibe_agent.llm import Finished, LLMError, TextChunk, UsageInfo, translate_error
 from vibe_agent.loop import Agent, ErrorEvent, Notice, TextDelta
 
 

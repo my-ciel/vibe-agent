@@ -1,7 +1,6 @@
 """환경 자가진단. 윈도우/맥에서 앱이 쓰는 기능이 실제로 동작하는지 확인한다."""
 from __future__ import annotations
 
-import socket
 import sys
 import tempfile
 import time
@@ -50,7 +49,7 @@ def _packages() -> Check:
 
 def _tkinter() -> Check:
     try:
-        import tkinter  # noqa: F401
+        import tkinter  # noqa: F401  (사용 가능 여부만 확인)
     except ImportError:
         return Check("폴더 선택창(tkinter)", "warn", "사용할 수 없어요. 폴더 경로를 직접 입력하면 됩니다.")
     return Check("폴더 선택창(tkinter)", "ok", "사용 가능")
