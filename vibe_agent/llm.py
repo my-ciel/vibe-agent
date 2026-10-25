@@ -144,7 +144,7 @@ def translate_error(exc: Exception) -> LLMError:
         if status == 429:
             return LLMError("요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.", status=status)
         if status == 400 and "valid model" in low:
-            return LLMError(f"모델 ID가 올바르지 않습니다. 사이드바에서 모델을 다시 선택하거나 철자를 확인하세요. ({detail})", status=status)
+            return LLMError(f"모델 ID가 올바르지 않습니다. 사이드바에서 모델을 다시 선택하거나 철자를 확인하세요. ({detail})")  # 기록과 무관한 오류라 재시도하지 않는다(status 없음)
         # 도구 호출 미지원은 OpenRouter의 구체적인 문구로만 판단한다 ("tool"이라는 단어만으로는 다른 오류와 구분되지 않는다)
         if status == 404 or "support tool" in low or "tool use" in low:
             return LLMError(f"이 모델은 코딩 에이전트(도구 호출)를 지원하지 않거나 지금 이용할 수 없습니다. 다른 모델을 선택해 보세요. ({detail[:120]})", status=status)

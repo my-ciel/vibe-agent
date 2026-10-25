@@ -135,3 +135,9 @@ def test_provider_name_and_raw_error_are_shown():
     err = translate_error(exc)
     assert err.status == 400
     assert "제공자: Google" in str(err) and "invalid tool schema" in str(err) and "새 대화" in str(err)
+
+
+def test_invalid_model_error_is_not_retried():
+    request = httpx.Request("POST", "https://x")
+    exc = openai.BadRequestError("x", response=httpx.Response(400, request=request), body={"message": "nope/x is not a valid model ID", "code": 400})
+    assert translate_error(exc).status is None
