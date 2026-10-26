@@ -88,3 +88,14 @@ def test_unreadable_saved_file_is_reported_not_silently_skipped(tmp_path):
     reloaded, _, _ = make_app(tmp_path)
     reloaded.run()
     assert not reloaded.exception and "질문" not in texts(reloaded)
+
+
+def test_key_check_labels_say_it_is_the_keys_limit_not_the_account_balance(tmp_path, monkeypatch):
+    from vibe_agent import llm
+
+    for remaining, expected in [(1.36, "이 키의 남은 한도 $1.36"), (None, "한도가 설정되어 있지 않아요")]:
+        monkeypatch.setattr(llm, "fetch_key_info", lambda key, _r=remaining: llm.KeyInfo(limit=5, usage=3.64, limit_remaining=_r))
+        at, _, _ = make_app(tmp_path, {"text": "x"})
+        at.run()
+        next(b for b in at.sidebar.button if b.label == "키 확인").click().run()
+        assert any(expected in s.value for s in at.sidebar.success), expected

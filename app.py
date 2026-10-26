@@ -381,12 +381,19 @@ with st.sidebar:
 
     st.divider()
     st.text_input("OpenRouter API 키", type="password", key="api_key", placeholder="sk-or-...")
-    st.button("키 확인", on_click=on_check_key, help="키가 유효한지, 남은 한도가 얼마인지 확인해요")
+    st.button("키 확인", on_click=on_check_key, help="키가 유효한지, 이 키에 설정된 한도가 얼마나 남았는지 확인해요 (OpenRouter 계정 잔액이 아니에요)")
     if S.key_error:
         st.error(S.key_error)
     elif S.key_info:
         remaining = S.key_info.limit_remaining
-        st.success("키 확인 완료" + (f" · 남은 한도 ${remaining:.2f}" if remaining is not None else " · 한도 제한 없음"))
+        st.success(
+            "키 확인 완료 · "
+            + (
+                f"이 키의 남은 한도 ${remaining:.2f} (확인한 시점 기준)"
+                if remaining is not None
+                else "이 키에는 한도가 설정되어 있지 않아요 (계정 크레딧이 떨어질 때까지 사용 가능)"
+            )
+        )
 
     st.divider()
     st.text_input("작업 폴더 경로", key="root_text", placeholder=r"예: C:\Users\me\my-project")
@@ -438,7 +445,7 @@ with st.sidebar:
     if info and info.supports_images is not None:
         st.caption("🖼️ 이미지 입력 가능" if info.supports_images else "🖼️ 이미지는 볼 수 없는 모델 (텍스트/코드 파일은 가능)")
 
-    limit = st.number_input("세션 최대 비용 ($)", min_value=0.0, value=1.0, step=0.5, help="이 금액에 닿으면 에이전트가 멈춰요. 0이면 제한 없음")
+    limit = st.number_input("세션 최대 비용 ($)", min_value=0.0, value=1.0, step=0.5, help="이 앱에서 이 대화가 쓸 수 있는 최대 금액이에요 (OpenRouter 키의 한도와는 별개). 닿으면 에이전트가 멈춰요. 0이면 제한 없음")
     auto_edits = st.toggle("파일 수정은 묻지 않고 진행", value=False, help="명령 실행은 계속 물어봐요. 변경 내용은 기록에서 볼 수 있어요.")
     max_steps = st.number_input("요청당 최대 단계", min_value=3, max_value=60, value=20, step=1)
 
